@@ -10,4 +10,4 @@ The sample covers a small part of what the engine detects. The full catalog has 
 
 ## License
 
-Proprietary — [CodeFixture](https://codefixture.com). Access to this repository does not grant any right to redistribute the source code or the binaries built from it.
+Proprietary evaluation license — see [`LICENSE`](LICENSE). You may build and test the engine to evaluate it; any other use, including within a company, requires an agreement with [CodeFixture](https://codefixture.com).

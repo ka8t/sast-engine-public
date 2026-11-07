@@ -1,0 +1,59 @@
+PROPRIETARY EVALUATION LICENSE
+
+Copyright (c) 2025-2026 CodeFixture. All rights reserved.
+
+This software, its rules and its documentation (the "Software") are the
+exclusive property of CodeFixture (the "Licensor"). The Software is made
+visible to the public; this does not make it open source.
+
+1. PERMITTED USE
+
+You may download, build and run the Software solely to test and evaluate
+it, including during working hours, on projects that are not used in
+production. Viewing and forking this repository on GitHub, as allowed by
+GitHub's Terms of Service, is also permitted.
+
+2. PROHIBITED USE
+
+Without a separate written agreement with the Licensor, you may not:
+
+  a. use the Software within or on behalf of a company or any other
+     organization for any purpose other than the testing permitted in
+     section 1, including in production, in continuous integration or to
+     audit code delivered to a client;
+  b. provide the Software, its results or a service based on it to anyone
+     else;
+  c. copy, distribute, publish, sublicense, sell or lend the Software or
+     any binary built from it outside of GitHub's fork feature;
+  d. remove or alter this license or any copyright notice.
+
+The full rule catalog is not part of this repository. It is licensed
+separately by the Licensor.
+
+3. END OF THE LICENSE
+
+Your rights end immediately if you break any term of this license. You
+must then stop using the Software and delete every copy you hold,
+including binaries built from it.
+
+4. NO WARRANTY
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. The Software may miss
+vulnerabilities or report false ones. It is not a substitute for a
+professional security audit, penetration testing or human code review.
+
+5. NO LIABILITY
+
+TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, THE LICENSOR AND ANY
+CONTRIBUTOR SHALL NOT BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY OR CONSEQUENTIAL DAMAGES ARISING FROM THE SOFTWARE OR ITS
+USE, INCLUDING LOSS OF DATA, BUSINESS INTERRUPTION OR SECURITY INCIDENTS,
+EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGES. You use the Software
+entirely at your own risk.
+
+6. CONTACT
+
+For commercial use, the full rule catalog and licensing inquiries:
+contact@codefixture.com
