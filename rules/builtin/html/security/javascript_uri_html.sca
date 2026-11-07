@@ -1,0 +1,41 @@
+rule javascript_uri_html
+  language  html
+  category  security
+  severity  HIGH
+  confidence 90
+  match
+    pattern  (href|action|src)\s*=\s*['"]javascript\s*:
+    scope    line
+    pattern-not  void\s*\(\s*0\s*\)
+  end
+  metadata
+    cwe    CWE-79
+  end
+  risk
+    en: href/action/src with javascript: executes arbitrary code on click or load (CWE-79).
+    fr: href/action/src avec javascript: exécute du code arbitraire au clic ou au chargement (CWE-79).
+    es: href/action/src with javascript: executes arbitrary code on click or load (CWE-79).
+    de: href/action/src with javascript: executes arbitrary code on click or load (CWE-79).
+  end
+  solution
+    en: Use normal URIs (/, #, https://) and event handlers.
+    fr: Utiliser des URIs normaux (/, #, https://) et des gestionnaires d'événements.
+    es: Use normal URIs (/, #, https://) and event handlers.
+    de: Use normal URIs (/, #, https://) and event handlers.
+  end
+  benefit
+    en: Reduces attack surface and strengthens application security.
+    fr: Reduit la surface d'attaque et renforce la securite de l'application.
+    es: Reduce la superficie de ataque y refuerza la seguridad de la aplicacion.
+    de: Reduziert die Angriffsflaeche und staerkt die Anwendungssicherheit.
+  end
+  fix_before
+    <a href="javascript:alert(1)">Click here</a>
+  end
+  fix_after
+    <a href="#" role="button">
+  end
+  requires
+    demo_fallback  true
+  end
+end

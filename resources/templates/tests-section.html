@@ -1,0 +1,32 @@
+<div class="tests-section">
+    <h2 class="section-title">🧪 {{i18n_unit_tests}} <a href="#sommaire" class="back-to-toc">↑ {{i18n_toc}}</a></h2>
+    <div class="tests-grid">
+        <div class="test-stat passed">
+            <div class="test-stat-value passed">{{passed}}</div>
+            <div class="test-stat-label">{{i18n_passed}}</div>
+        </div>
+        <div class="test-stat failed">
+            <div class="test-stat-value failed">{{failed}}</div>
+            <div class="test-stat-label">{{i18n_failed}}</div>
+        </div>
+        <div class="test-stat errors">
+            <div class="test-stat-value errors">{{errors}}</div>
+            <div class="test-stat-label">{{i18n_errors}}</div>
+        </div>
+        <div class="test-stat skipped">
+            <div class="test-stat-value skipped">{{skipped}}</div>
+            <div class="test-stat-label">{{i18n_skipped}}</div>
+        </div>
+        <div class="test-stat">
+            <div class="test-stat-value">{{success_rate}}%</div>
+            <div class="test-stat-label">{{i18n_success_rate}}</div>
+        </div>
+    </div>
+    <div class="test-progress">
+        <div class="test-progress-passed" style="width: {{passed_pct}}%"></div>
+        <div class="test-progress-failed" style="width: {{failed_pct}}%"></div>
+        <div class="test-progress-errors" style="width: {{errors_pct}}%"></div>
+        <div class="test-progress-skipped" style="width: {{skipped_pct}}%"></div>
+    </div>
+    {{failed_list}}
+</div>

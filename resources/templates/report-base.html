@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="{{lang}}">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{i18n_title}} {{project_name}} - {{timestamp}}</title>
+    <link rel="icon" type="{{favicon_type}}" href="{{favicon_data}}">
+    <style>{{css}}</style>
+</head>
+<body class="{{demo_body_class}}">
+    <!-- Demo mode overlays -->
+    <div class="demo-banner" style="{{demo_display}}">{{demo_banner_text}}</div>
+    {{severity_filter_banner}}
+    <div class="demo-watermark" style="{{demo_display}}">{{demo_watermark_text}}</div>
+
+    <!-- Sidebar TOC -->
+    <nav class="sidebar-toc">
+        <h3>{{i18n_navigation}}</h3>
+        <div class="sidebar-level-label">📊 {{i18n_level_executive}}</div>
+        <a href="#nav-header">💚 {{i18n_health_score}}</a>
+        <a href="#section-charts">📊 {{i18n_visualization}}</a>
+        <a href="#section-summary">📋 {{i18n_summary}}</a>
+        <div class="sidebar-level-label">🔧 {{i18n_level_detail}}</div>
+        <a href="#section-params">📋 {{i18n_parameters}}</a>
+        <a href="#section-top-files">📁 {{i18n_top_files_nav}}</a>
+        <a href="#section-comparison" style="{{comparison_display}}">📊 {{i18n_comparison}}</a>
+        <a href="#section-findings">🔍 {{i18n_findings}}</a>
+        <a href="#section-custom-rules">📜 {{i18n_custom_rules_nav}}</a>
+        <a href="#section-fixtures" style="{{fixtures_display}}">🔬 {{i18n_fixtures_nav}}</a>
+        <a href="#section-dependencies" style="{{dependencies_display}}">📦 {{i18n_dependencies_title}}</a>
+        <!--DEV_ONLY_DB--><a href="#section-database" id="toc-database" style="{{database_display}}">🗄️ {{i18n_database_schema}}</a><!--/DEV_ONLY_DB-->
+        <a href="#section-sla" style="{{sla_display}}">⏱️ {{i18n_sla_title}}</a>
+        <a href="#section-git-blame" style="{{git_blame_display}}">👤 {{i18n_git_blame_title}}</a>
+        {{COMPLIANCE_TOC_START}}<a href="#section-compliance">📋 {{i18n_compliance_title}}</a>{{COMPLIANCE_TOC_END}}
+        {{ASVS_TOC_START}}<a href="#section-asvs">🔰 {{i18n_asvs_title}}</a>{{ASVS_TOC_END}}
+        {{NIST_TOC_START}}<a href="#section-nist">🛡️ {{i18n_nist_title}}</a>{{NIST_TOC_END}}
+        <a href="#section-validations">✅ {{i18n_validations}}</a>
+        <a href="#section-glossary">📖 {{i18n_glossary_title}}</a>
+    </nav>
+    <div class="sidebar-resize-handle" id="sidebarResizeHandle"></div>
+
+    <!-- Navigation buttons -->
+    <button class="back-to-top" onclick="scrollToTop()" title="Retour en haut">↑</button>
+    <div class="nav-buttons">
+        <button class="nav-btn" id="navPrev" onclick="navPrev()" title="Section précédente (k)">←</button>
+        <button class="nav-btn" id="navNext" onclick="navNext()" title="Section suivante (j)">→</button>
+    </div>
+    <div class="keyboard-hint"><kbd>j</kbd>/<kbd>k</kbd> naviguer • <kbd>Ctrl+Home</kbd> début</div>
+
+    <div class="container">
+        <!-- Sommaire -->
+        <div class="toc-block" id="sommaire">
+            <div class="toc-bar">
+                <button class="toc-toggle" onclick="toggleToc()" aria-expanded="false" aria-controls="toc-body">
+                    <span>📋 {{i18n_toc}}</span>
+                    <span class="toc-chevron">▾</span>
+                </button>
+                <nav class="toc-levels">
+                    <a href="#nav-header" class="toc-level-pill">📊 {{i18n_level_executive}}</a>
+                    <a href="#level-detail" class="toc-level-pill">🔧 {{i18n_level_detail}}</a>
+                </nav>
+            </div>
+            <div class="toc-body" id="toc-body">
+                <div class="toc-inner">
+                <ul class="toc-list">
+                    <li><a href="#nav-header">💚 {{i18n_health_score}}</a></li>
+                    <li><a href="#section-charts">📊 {{i18n_visualization}}</a></li>
+                    <li><a href="#section-params">📋 {{i18n_parameters}}</a></li>
+                    <li><a href="#section-summary">📋 {{i18n_summary}}</a></li>
+                    <li><a href="#section-top-files">📁 {{i18n_top_files_nav}}</a></li>
+                    <li style="{{comparison_display}}"><a href="#section-comparison">📊 {{i18n_comparison}}</a></li>
+                    <li><a href="#section-findings">🔍 {{i18n_findings}}</a></li>
+                    <li><a href="#section-custom-rules">📜 {{i18n_custom_rules_nav}}</a></li>
+                    <li style="{{fixtures_display}}"><a href="#section-fixtures">🔬 {{i18n_fixtures_nav}}</a></li>
+                    <li style="{{dependencies_display}}"><a href="#section-dependencies">📦 {{i18n_dependencies_title}}</a></li>
+                    <!--DEV_ONLY_DB--><li style="{{database_display}}"><a href="#section-database">🗄️ {{i18n_database_schema}}</a></li><!--/DEV_ONLY_DB-->
+                    <li style="{{sla_display}}"><a href="#section-sla">⏱️ {{i18n_sla_title}}</a></li>
+                    <li style="{{git_blame_display}}"><a href="#section-git-blame">👤 {{i18n_git_blame_title}}</a></li>
+                    {{COMPLIANCE_NAV_START}}<li><a href="#section-compliance">📋 {{i18n_compliance_title}}</a></li>{{COMPLIANCE_NAV_END}}
+                    {{ASVS_NAV_START}}<li><a href="#section-asvs">🔰 {{i18n_asvs_title}}</a></li>{{ASVS_NAV_END}}
+                    {{NIST_NAV_START}}<li><a href="#section-nist">🛡️ {{i18n_nist_title}}</a></li>{{NIST_NAV_END}}
+                    <li><a href="#section-validations">✅ {{i18n_validations}}</a></li>
+                    <li><a href="#section-glossary">📖 {{i18n_glossary_title}}</a></li>
+                </ul>
+                </div>
+            </div>
+        </div>
+
+        <button class="print-btn" onclick="togglePrintMode()">🖨️ {{i18n_print_version}}</button>
+
+        <div class="header" id="nav-header" data-nav-section="{{i18n_health_score}}">
+            <h1><img src="{{favicon_header_data}}" alt="" class="header-logo"> {{i18n_title}} - {{project_name}}</h1>
+            <div class="meta">{{i18n_generated_on}} {{date_str}} • v{{project_version}} {{project_uuid_badge}}<span class="lang-badge">{{lang_label}}</span></div>
+            <div class="header-stats">📂 {{total_files_scanned}} {{i18n_files_scanned}} • 📝 {{total_lines_code}} {{i18n_lines_of_code}} • ⏱️ {{audit_total_time}}s</div>
+            {{project_description_html}}
+            <div class="health-bar">
+                <h3>{{i18n_health_score}} : {{health_score}}%</h3>
+                <div class="health-track"><div class="health-fill {{health_class}}" style="width: {{health_score}}%"></div></div>
+                <p class="score-legend">{{score_legend}}</p>
+            </div>
+            {{COMPLIANCE_SCORE_BAR_START}}
+            <div class="health-bar">
+                <h3>{{i18n_compliance_score}} : {{compliance_score}}%</h3>
+                <div class="health-track"><div class="health-fill {{compliance_class}}" style="width: {{compliance_score}}%"></div></div>
+                <p class="score-legend">{{score_legend}}</p>
+            </div>
+            {{COMPLIANCE_SCORE_BAR_END}}
+            <div class="health-charts-grid">
+                <div class="chart-card"><div class="chart-container" style="height:250px"><canvas id="healthSeverityChart"></canvas></div></div>
+                {{COMPLIANCE_SCORE_GAUGE_START}}
+                <div class="chart-card"><div class="chart-container" style="height:250px"><canvas id="complianceCoverageBarChart"></canvas></div></div>
+                {{COMPLIANCE_SCORE_GAUGE_END}}
+            </div>
+            {{health_explanation_html}}
+        </div>
+
+        <h2 id="section-charts" data-nav-section="{{i18n_visualization}}" class="section-title">📊 {{i18n_visualization}} <a href="#sommaire" class="back-to-toc">↑ {{i18n_toc}}</a></h2>
+        <div class="charts-grid">
+            <div class="chart-card clickable">
+                <h3>📊 {{i18n_severity_distribution}}</h3>
+                <p class="chart-subtitle">{{i18n_severity_distribution_subtitle}}</p>
+                <div class="chart-container"><canvas id="severityChart"></canvas></div>
+            </div>
+            <div class="chart-card clickable">
+                <h3>📂 {{i18n_by_category}}</h3>
+                <p class="chart-subtitle">{{i18n_by_category_subtitle}}</p>
+                <div class="chart-container"><canvas id="categoriesChart"></canvas></div>
+            </div>
+            <div class="chart-card">
+                <h3>📊 {{i18n_findings_by_lang_severity}}</h3>
+                <div class="chart-container"><canvas id="langSeverityChart"></canvas></div>
+            </div>
+            <div class="chart-card clickable">
+                <h3>{{i18n_code_vs_deps}}</h3>
+                <div class="chart-container"><canvas id="codeVsDepsChart"></canvas></div>
+            </div>
+            <div class="chart-card clickable" style="{{tests_chart_display}}">
+                <h3>🧪 {{i18n_tests}}</h3>
+                <div class="chart-container"><canvas id="testsChart"></canvas></div>
+            </div>
+            <div class="chart-card clickable" style="{{tests_chart_display}}">
+                <h3>🔬 {{i18n_fixtures}}</h3>
+                <div class="chart-container"><canvas id="fixturesChart"></canvas></div>
+            </div>
+            <div class="chart-card clickable" id="dependenciesChartCard" style="{{dependencies_display}}">
+                <h3>📦 {{i18n_dependencies_title}}</h3>
+                <div class="chart-container"><canvas id="dependenciesChart"></canvas></div>
+            </div>
+            <!--DEV_ONLY_DB--><div class="chart-card clickable" id="databaseChartCard" style="{{database_display}}">
+                <h3>🗄️ {{i18n_database_schema}}</h3>
+                <div class="chart-container"><canvas id="databaseChart"></canvas></div>
+            </div><!--/DEV_ONLY_DB-->
+            <div class="chart-card" id="taintFlowsChartCard" style="{{taint_display}}">
+                <h3>🔬 {{i18n_taint_trace_summary}}</h3>
+                <div class="chart-container"><canvas id="taintFlowsChart"></canvas></div>
+            </div>
+            <div class="chart-card" id="findingsBySourceChartCard" style="{{taint_display}}">
+                <h3>📊 Findings par source</h3>
+                <div class="chart-container"><canvas id="findingsBySourceChart"></canvas></div>
+            </div>
+        </div>
+
+        <div class="charts-grid charts-grid-history">
+            <div class="chart-card">
+                <h3>📈 {{i18n_findings_evolution}}</h3>
+                <p class="chart-subtitle">{{i18n_chart_subtitle_findings}}</p>
+                <div class="chart-container chart-container-lg"><canvas id="historyChart"></canvas></div>
+            </div>
+            <div class="chart-card" style="{{tests_chart_display}}">
+                <h3>🧪 {{i18n_tests_evolution}}</h3>
+                <p class="chart-subtitle">{{i18n_chart_subtitle_tests}}</p>
+                <div class="chart-container chart-container-lg"><canvas id="testsHistoryChart"></canvas></div>
+            </div>
+            <!--DEV_ONLY_DB--><div class="chart-card" style="{{database_display}}">
+                <h3>🗄️ {{i18n_database_evolution}}</h3>
+                <p class="chart-subtitle">{{i18n_chart_subtitle_database}}</p>
+                <div class="chart-container chart-container-lg"><canvas id="databaseHistoryChart"></canvas></div>
+            </div><!--/DEV_ONLY_DB-->
+        </div>
+
+        <div id="executive-summary" class="charts-grid">
+            <div class="exec-card exec-severity">
+                <h3>{{i18n_summary}}</h3>
+                <div class="exec-severity-row">
+                    <div class="exec-severity-cell">
+                        <span class="exec-severity-value high">{{total_high}}</span>
+                        <span class="exec-severity-label">{{i18n_severity_high}}</span>
+                    </div>
+                    <div class="exec-severity-cell">
+                        <span class="exec-severity-value medium">{{total_medium}}</span>
+                        <span class="exec-severity-label">{{i18n_severity_medium}}</span>
+                    </div>
+                    <div class="exec-severity-cell">
+                        <span class="exec-severity-value low">{{total_low}}</span>
+                        <span class="exec-severity-label">{{i18n_severity_low}}</span>
+                    </div>
+                </div>
+            </div>
+            <div class="exec-card exec-trend">
+                <h3>{{i18n_exec_trend}}</h3>
+                {{exec_trend_html}}
+            </div>
+            <div class="exec-card exec-recommendations">
+                <h3>{{i18n_exec_recommendations}}</h3>
+                {{exec_recommendations_html}}
+            </div>
+        </div>
+        <h2 id="section-summary" data-nav-section="{{i18n_summary}}" class="section-title">📋 {{i18n_summary}} <a href="#sommaire" class="back-to-toc">↑ {{i18n_toc}}</a></h2>
+        <div class="stats">
+            <div class="stat-card"><div class="stat-value high">{{total_high}}</div><div class="stat-label">{{i18n_severity_high}}</div></div>
+            <div class="stat-card"><div class="stat-value medium">{{total_medium}}</div><div class="stat-label">{{i18n_severity_medium}}</div></div>
+            <div class="stat-card"><div class="stat-value low">{{total_low}}</div><div class="stat-label">{{i18n_severity_low}}</div></div>
+            <div class="stat-card"><div class="stat-value info">{{total_info}}</div><div class="stat-label">{{i18n_severity_info}}</div></div>
+            <div class="stat-card clickable" onclick="scrollToSection('section-validations')"><div class="stat-value success">{{total_successes}}</div><div class="stat-label">{{i18n_validations}}</div></div>
+            <div class="stat-card"><div class="stat-value business">{{total_business}}</div><div class="stat-label">📦 {{i18n_business_code}}</div></div>
+            <div class="stat-card clickable" onclick="scrollToSection('section-dependencies')"><div class="stat-value deps">{{total_deps}}</div><div class="stat-label">🔗 {{i18n_dependencies}}</div></div>
+            <div class="stat-card"><div class="stat-value {{tests_color}}">{{tests_rate}}%</div><div class="stat-label">🧪 Tests ({{tests_total}})</div></div>
+            <div class="stat-card"><div class="stat-value {{fixtures_color}}">{{fixtures_rate}}%</div><div class="stat-label">🔬 Fixtures ({{fixtures_total}})</div></div>
+            <div class="stat-card"><div class="stat-value">{{audit_total_time}}s</div><div class="stat-label">⏱️ {{i18n_audit_duration}}</div></div>
+        </div>
+
+        {{threat_context_html}}
+
+        <!-- Séparateur visuel entre les 2 niveaux de lecture -->
+        <div class="level-separator" id="level-separator">
+            <div class="level-separator-line"></div>
+            <span class="level-separator-label">🔧 {{i18n_level_detail}}</span>
+            <div class="level-separator-line"></div>
+        </div>
+
+        <!-- ========== NIVEAU 2 — VUE TECHNICIEN ========== -->
+        <div id="level-detail">
+
+        <details class="exec-collapsed-block">
+            <summary class="exec-collapsed-summary">
+                <span>📋 {{i18n_parameters}}</span>
+                <span class="exec-collapsed-chevron">▶</span>
+            </summary>
+            <div id="level-executive">
+            {{audit_params_html}}
+            </div>
+        </details>
+
+        <div class="chart-card" id="section-top-files" data-nav-section="{{i18n_top_files_nav}}">
+            <h3>{{i18n_top_files}}</h3>
+            <p class="chart-subtitle">{{i18n_top_files_subtitle}}</p>
+            <div class="heatmap">{{heatmap_html}}</div>
+        </div>
+
+        {{comparison_html}}
+
+        {{category_examples_html}}
+
+        <div class="section findings-section" id="section-findings" data-nav-section="{{i18n_findings}}">
+            <div class="findings-header section-header" onclick="toggleSection('section-findings')">
+                <span class="findings-header-icon">🔍</span>
+                <h2>{{i18n_findings}} <span class="badge badge-high">{{total_findings}}</span></h2>
+                <a href="#sommaire" class="back-to-toc" onclick="event.stopPropagation()">↑ {{i18n_toc}}</a>
+                <span class="chevron">▶</span>
+            </div>
+            <div class="section-content">
+                {{sections_html}}
+            </div>
+        </div>
+
+        <div id="section-custom-rules">{{custom_rules_html}}</div>
+
+        <div id="section-tests" data-nav-section="Tests">{{tests_html}}</div>
+
+        <div id="section-fixtures" style="{{fixtures_display}}">{{fixtures_html}}</div>
+
+        <div id="section-dependencies" data-nav-section="Dependencies" style="{{dependencies_display}}">
+            <h2 class="section-title">📦 {{i18n_dependencies_title}} <a href="#sommaire" class="back-to-toc">↑ {{i18n_toc}}</a></h2>
+            <div class="stats">
+                <div class="stat-card"><div class="stat-value">{{deps_total_scanned}}</div><div class="stat-label">{{i18n_deps_scanned}}</div></div>
+                <div class="stat-card"><div class="stat-value high">{{deps_vulnerable}}</div><div class="stat-label">{{i18n_deps_vulnerable}}</div></div>
+                <div class="stat-card"><div class="stat-value medium">{{deps_unpinned}}</div><div class="stat-label">{{i18n_deps_unpinned}}</div></div>
+                <div class="stat-card"><div class="stat-value success">{{deps_ok}}</div><div class="stat-label">{{i18n_deps_ok}}</div></div>
+            </div>
+            {{deps_warnings_html}}
+            {{deps_findings_html}}
+        </div>
+
+        <!--DEV_ONLY_DB--><div id="section-database" data-nav-section="Database" style="{{database_display}}">
+            <h2 class="section-title">🗄️ {{i18n_database_schema}} <a href="#sommaire" class="back-to-toc">↑ {{i18n_toc}}</a></h2>
+            <div class="stats">
+                <div class="stat-card"><div class="stat-value">{{db_tables}}</div><div class="stat-label">{{i18n_tables}}</div></div>
+                <div class="stat-card"><div class="stat-value">{{db_columns}}</div><div class="stat-label">{{i18n_columns}}</div></div>
+                <div class="stat-card"><div class="stat-value">{{db_indexes}}</div><div class="stat-label">{{i18n_indexes}}</div></div>
+                <div class="stat-card"><div class="stat-value">{{db_enums}}</div><div class="stat-label">{{i18n_enums}}</div></div>
+                <div class="stat-card"><div class="stat-value success">+{{db_added}}</div><div class="stat-label">{{i18n_additions}}</div></div>
+                <div class="stat-card"><div class="stat-value high">-{{db_dropped}}</div><div class="stat-label">{{i18n_deletions}}</div></div>
+                <div class="stat-card"><div class="stat-value medium">~{{db_modified}}</div><div class="stat-label">{{i18n_modified}}</div></div>
+                <div class="stat-card"><div class="stat-value {{db_stability_color}}">{{db_stability}}%</div><div class="stat-label">{{i18n_stability}}</div></div>
+            </div>
+        </div><!--/DEV_ONLY_DB-->
+
+        <div style="{{sla_display}}">
+        <h2 id="section-sla" data-nav-section="{{i18n_sla_title}}" class="section-title">⏱️ {{i18n_sla_title}} <a href="#sommaire" class="back-to-toc">↑ {{i18n_toc}}</a></h2>
+        {{sla_html}}
+        </div>
+
+        <div style="{{git_blame_display}}">
+        <h2 id="section-git-blame" data-nav-section="{{i18n_git_blame_title}}" class="section-title">👤 {{i18n_git_blame_title}} <a href="#sommaire" class="back-to-toc">↑ {{i18n_toc}}</a></h2>
+        {{git_blame_html}}
+        </div>
+
+        {{COMPLIANCE_SECTION_START}}
+        <div class="section compliance-section open" id="section-compliance" data-nav-section="{{i18n_compliance_title}}">
+            <div class="section-header" onclick="toggleSection('section-compliance')">
+                <span class="section-icon">📋</span>
+                <h2>{{i18n_compliance_title}} <span class="badge badge-compliance">{{compliance_covered}}/{{compliance_total}}</span></h2>
+                <a href="#sommaire" class="back-to-toc">↑ {{i18n_toc}}</a>
+                <span class="chevron">▶</span>
+            </div>
+            <div class="section-content">{{compliance_html}}</div>
+        </div>
+        {{COMPLIANCE_SECTION_END}}
+
+        {{ASVS_SECTION_START}}
+        <div class="section asvs-section open" id="section-asvs" data-nav-section="{{i18n_asvs_title}}">
+            <div class="section-header" onclick="toggleSection('section-asvs')">
+                <span class="section-icon">🔰</span>
+                <h2>{{i18n_asvs_title}} <span class="badge badge-asvs">{{asvs_covered}}/{{asvs_total}}</span></h2>
+                <a href="#sommaire" class="back-to-toc">↑ {{i18n_toc}}</a>
+                <span class="chevron">▶</span>
+            </div>
+            <div class="section-content">{{asvs_html}}</div>
+        </div>
+        {{ASVS_SECTION_END}}
+
+        {{NIST_SECTION_START}}
+        <div class="section nist-section open" id="section-nist" data-nav-section="{{i18n_nist_title}}">
+            <div class="section-header" onclick="toggleSection('section-nist')">
+                <span class="section-icon">🛡️</span>
+                <h2>{{i18n_nist_title}} <span class="badge badge-nist">{{nist_covered}}/{{nist_total}}</span></h2>
+                <a href="#sommaire" class="back-to-toc">↑ {{i18n_toc}}</a>
+                <span class="chevron">▶</span>
+            </div>
+            <div class="section-content">{{nist_html}}</div>
+        </div>
+        {{NIST_SECTION_END}}
+
+        <div class="section validations-section" id="section-validations" data-nav-section="{{i18n_validations}}">
+            <div class="section-header" onclick="toggleSection('section-validations')">
+                <span class="section-icon">✅</span>
+                <h2>{{i18n_validations}} <span class="badge badge-success">{{total_successes}}</span></h2>
+                <a href="#sommaire" class="back-to-toc">↑ {{i18n_toc}}</a>
+                <span class="chevron">▶</span>
+            </div>
+            <div class="section-content">
+                <p class="section-intro">{{i18n_validations_intro}}</p>
+                {{successes_html}}
+            </div>
+        </div>
+
+        <h2 id="section-glossary" data-nav-section="{{i18n_glossary_title}}" class="section-title">📖 {{i18n_glossary_title}} <a href="#sommaire" class="back-to-toc">↑ {{i18n_toc}}</a></h2>
+        <p class="glossary-subtitle">{{i18n_glossary_subtitle}}</p>
+        {{glossary_html}}
+
+        </div><!-- /level-detail -->
+
+        <div class="demo-footer-notice" style="{{demo_display}}">{{demo_footer_text}}</div>
+        <div class="footer">
+            <p>{{tool_name}} v{{tool_version}} — {{project_name}} {{project_version_display}}| {{company_name}}</p>
+        </div>
+    </div>
+    <!-- Panneau de suppression de findings -->
+    <div id="suppressPanel" class="suppress-panel" style="display:none">
+        <span><span id="suppressCount">0</span> suppression(s)</span>
+        <button onclick="downloadSuppressions()">{{i18n_suppress_download}}</button>
+        <button onclick="copySuppressions()">{{i18n_suppress_copy}}</button>
+        <button onclick="clearSuppressions()">{{i18n_suppress_clear}}</button>
+    </div>
+    <script>{{chartjs_lib}}</script>
+    <script>{{js}}</script>
+    <script>{{charts_js}}</script>
+    <script>
+    /* Suppression de findings — logique client */
+    var _suppressions = [];
+
+    function toggleSuppression(btn) {
+        var finding = btn.closest('.finding');
+        var ruleKey = finding.getAttribute('data-rule-key');
+        var file = finding.getAttribute('data-file');
+        var codeHash = finding.getAttribute('data-code-hash');
+
+        if (finding.classList.toggle('suppressed')) {
+            _suppressions.push({
+                rule_key: ruleKey,
+                file: file,
+                code_hash: codeHash === 'None' ? null : parseInt(codeHash),
+                reason: '',
+                suppressed_at: new Date().toISOString().split('T')[0]
+            });
+        } else {
+            _suppressions = _suppressions.filter(function(s) {
+                return !(s.rule_key === ruleKey && s.file === file);
+            });
+        }
+        _updatePanel();
+    }
+
+    function _updatePanel() {
+        var panel = document.getElementById('suppressPanel');
+        var count = document.getElementById('suppressCount');
+        count.textContent = _suppressions.length;
+        panel.style.display = _suppressions.length > 0 ? 'flex' : 'none';
+    }
+
+    function _buildJson() {
+        return JSON.stringify({version: '1.0', suppressions: _suppressions}, null, 2);
+    }
+
+    function downloadSuppressions() {
+        var blob = new Blob([_buildJson()], {type: 'application/json'});
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = '.sca-suppress.json';
+        a.click();
+    }
+
+    function copySuppressions() {
+        navigator.clipboard.writeText(_buildJson()).then(function() {
+            var btn = event.target;
+            var orig = btn.textContent;
+            btn.textContent = '✓';
+            setTimeout(function() { btn.textContent = orig; }, 1500);
+        });
+    }
+
+    function clearSuppressions() {
+        _suppressions = [];
+        document.querySelectorAll('.finding.suppressed').forEach(function(el) {
+            el.classList.remove('suppressed');
+        });
+        _updatePanel();
+    }
+
+    function navigateToFile(filepath) {
+        // Comparaison via getAttribute pour éviter les soucis d'échappement
+        // de sélecteur CSS (chemins avec [, (, ), espaces, etc.).
+        var findings = Array.prototype.filter.call(
+            document.querySelectorAll('.finding[data-file]'),
+            function(el) { return el.getAttribute('data-file') === filepath; }
+        );
+        if (!findings.length) return;
+        // Conteneurs parents qui se déplient via la classe .open (et non
+        // via l'élément <details>) : section, sub-group, category-group,
+        // rule-group, compliance-accordion.
+        var openSelectors = '.section, .sub-group, .category-group, .rule-group, .compliance-accordion';
+        findings.forEach(function(f) {
+            // Ouvrir tous les ancêtres "div.open"
+            var parent = f.parentElement;
+            while (parent && parent !== document.body) {
+                if (parent.matches && parent.matches(openSelectors)) {
+                    parent.classList.add('open');
+                }
+                if (parent.tagName === 'DETAILS') {
+                    parent.open = true;
+                }
+                parent = parent.parentElement;
+            }
+            // Ouvrir aussi les <details> internes (playbook, fix, risk, solution, taint)
+            f.querySelectorAll('details').forEach(function(d) { d.open = true; });
+            // Highlight visuel sur chaque occurrence du fichier
+            f.classList.add('hm-highlight');
+            setTimeout(function() { f.classList.remove('hm-highlight'); }, 2400);
+        });
+        // Scroll vers la première finding, en compensant la TOC sticky
+        var target = findings[0];
+        var rect = target.getBoundingClientRect();
+        var tocOffset = 80; // hauteur approximative de la TOC sticky
+        var y = window.scrollY + rect.top - tocOffset;
+        window.scrollTo({ top: y, behavior: 'smooth' });
+    }
+
+    </script>
+</body>
+</html>

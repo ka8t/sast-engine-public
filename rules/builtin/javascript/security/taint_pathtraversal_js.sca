@@ -1,0 +1,80 @@
+rule taint_pathtraversal_js
+  language  javascript
+  category  security
+  severity  HIGH
+  confidence 85
+  source  req\.(params|query|body)\.  kind=http
+  source  req\.params\[  kind=http
+  source  process\.argv\[  kind=cli
+  source  req\.cookies  kind=http
+  source  req\.headers  kind=http
+  source  req\.ip  kind=http
+  source  req\.hostname  kind=http
+  source  req\.url  kind=http
+  source  req\.path  kind=http
+  source  req\.get\s*\(  kind=http
+  sink    fs\.readFile\s*\(
+  sink    fs\.readFileSync\s*\(
+  sink    fs\.writeFile\s*\(
+  sink    fs\.createReadStream\s*\(
+  sink    res\.sendFile\s*\(
+  sink    path\.join\s*\(
+  sink    path\.resolve\s*\(
+  # Rust-only addition (2026-11-04 resync with the Python rule): extra sinks kept from the pre-parity Rust rule (sync write,
+  # `sendFile` on any receiver, not only `res`).
+  sink    fs\.writeFileSync\s*\(
+  sink    sendFile\s*\(
+  sanitizer  path\.normalize
+  sanitizer  path\.basename
+  sanitizer  startsWith\s*\(
+  sanitizer  sanitize
+  passthrough  decodeURIComponent
+  passthrough  encodeURIComponent
+  passthrough  JSON\.parse
+  passthrough  JSON\.stringify
+  passthrough  \.trim\s*\(
+  passthrough  \.toLowerCase\s*\(
+  passthrough  \.toUpperCase\s*\(
+  passthrough  \.slice\s*\(
+  passthrough  \.substring\s*\(
+  passthrough  \.replace\s*\(
+  passthrough  \.split\s*\(
+  passthrough  \.join\s*\(
+  passthrough  String\s*\(
+  passthrough  \.toString\s*\(
+  message
+    en: Path Traversal — tainted data used as file path
+    fr: Path Traversal — données non fiables utilisées comme chemin de fichier
+  end
+  risk
+    en: An attacker can read or write arbitrary files on the server.
+    fr: Un attaquant peut lire ou écrire des fichiers arbitraires sur le serveur.
+    es: Un atacante puede leer o escribir archivos arbitrarios en el servidor.
+    de: Ein Angreifer kann beliebige Dateien auf dem Server lesen oder schreiben.
+  end
+  solution
+    en: Use path.basename() and validate the resolved path stays within the allowed directory.
+    fr: Utilisez path.basename() et vérifiez que le chemin résolu reste dans le répertoire autorisé.
+    es: Usar path.basename() y validar que la ruta resuelta permanezca dentro del directorio permitido.
+    de: path.basename() verwenden und sicherstellen, dass der aufgeloeste Pfad im erlaubten Verzeichnis bleibt.
+  end
+  metadata
+    cwe    CWE-22
+    owasp  A01:2021
+  end
+  benefit
+    en: Reduces attack surface and strengthens application security.
+    fr: Reduit la surface d'attaque et renforce la securite de l'application.
+    es: Reduce la superficie de ataque y refuerza la seguridad de la aplicacion.
+    de: Reduziert die Angriffsflaeche und staerkt die Anwendungssicherheit.
+  end
+  fix_before
+    db.query("SELECT * FROM t WHERE id=" + val);
+  end
+  fix_after
+    db.query("SELECT * FROM t WHERE id=$1", [val]);
+  end
+  requires
+    demo_fallback  true
+  end
+end

@@ -1,0 +1,32 @@
+# StaticCodeAudit — GitLab CI configuration
+# Copier ce bloc dans le .gitlab-ci.yml de votre projet
+#
+# Prérequis :
+#   - Placer le binaire SCA dans un emplacement accessible
+#   - Adapter SCA_BINARY_URL ci-dessous
+#   - La licence (license.json) doit être à côté du binaire
+
+sca-audit:
+  stage: test
+  image: ubuntu:22.04
+  variables:
+    # Adapter cette URL au binaire SCA de votre organisation
+    SCA_BINARY_URL: https://internal.example.com/tools/sca/staticcodeaudit-linux-x64
+    SCA_LANG: en
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq curl > /dev/null
+    - curl -fsSL "$SCA_BINARY_URL" -o staticcodeaudit && chmod +x staticcodeaudit
+  script:
+    - ./staticcodeaudit . --sarif --fail-on-high --lang=$SCA_LANG
+  artifacts:
+    # SARIF intégré automatiquement dans GitLab Security Dashboard
+    reports:
+      sast: docs/audit-reports/*.sarif
+    # Rapport HTML téléchargeable depuis la page du pipeline
+    paths:
+      - docs/audit-reports/*.html
+    when: always
+    expire_in: 30 days
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH

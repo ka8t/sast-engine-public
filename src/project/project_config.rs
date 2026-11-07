@@ -1,0 +1,610 @@
+//! Reads `audit.config.json` (`paths.include`/`paths.exclude`) and
+//! auto-detects project structure when this file is
+//! absent — **partial** port of `Audit/sca/projects.py::
+//! _auto_detect_project` (languages + root directories containing
+//! code → proposed `paths.include`) and of `sca/config.py::load_config`
+//! (reading `paths.include`/`paths.exclude`). Version/name detection
+//! via `package.json`/`pyproject.toml` and the full interactive
+//! wizard (7 steps, `sca/cli.py::_interactive_init`) are not
+//! ported — out of scope (only `paths.include`/`paths.exclude`
+//! affects file discovery, which is the reason this module exists).
+//!
+//! **Accepted deviation from Python, confirmed with the maintainer (2026-08-26)**:
+//! on the Python side, this file is **silently** auto-generated on
+//! each scan if absent (`sca/cli.py:1108-1111`,
+//! `_init_project_config(force_init=False)`) — never interactive outside
+//! an explicit `--init`. The maintainer explicitly requested an **interactive
+//! proposal** on the Rust side rather than a silent write
+//! (confirmed by asking, not assumed): the interaction logic
+//! (prompting, TTY detection) lives in `main.rs`, this
+//! module only detects/reads/writes.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
+
+use crate::scan::orchestrator::SourceLanguage;
+
+/// Directories never relevant for detection — exact mirror of
+/// `sca/projects.py::_EXCLUDED_DIRS`. Hidden directories
+/// (`.` prefix) are excluded separately, same rule as Python.
+const EXCLUDED_DIRS: &[&str] = &[
+    "node_modules",
+    "__pycache__",
+    ".venv",
+    "venv",
+    "vendor",
+    ".git",
+    "dist",
+    "build",
+    ".tox",
+    ".mypy_cache",
+    ".pytest_cache",
+];
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DetectedProjectInfo {
+    pub languages: Vec<String>,
+    pub include_paths: Vec<String>,
+    pub exclude_patterns: Vec<String>,
+}
+
+/// Detects the languages present and the root directories containing
+/// code, to propose a restricted `paths.include` rather than
+/// walking the whole project (mirror of `_auto_detect_project`, without
+/// version/name detection — out of scope here, reserved for
+/// the full interactive wizard on the Python side).
+pub fn auto_detect_project(root: &Path) -> DetectedProjectInfo {
+    let mut languages: BTreeSet<String> = BTreeSet::new();
+    let mut top_level_dirs: BTreeSet<String> = BTreeSet::new();
+    let mut has_root_level_files = false;
+
+    walk_detect(
+        root,
+        root,
+        &mut languages,
+        &mut top_level_dirs,
+        &mut has_root_level_files,
+    );
+
+    let mut include_paths: Vec<String> = top_level_dirs
+        .into_iter()
+        .map(|d| format!("{d}/"))
+        .collect();
+    if has_root_level_files || include_paths.is_empty() {
+        include_paths.push(".".to_string());
+    }
+    include_paths.sort();
+    include_paths.dedup();
+
+    DetectedProjectInfo {
+        languages: languages.into_iter().collect(),
+        include_paths,
+        exclude_patterns: EXCLUDED_DIRS.iter().map(|d| format!("**/{d}/**")).collect(),
+    }
+}
+
+fn walk_detect(
+    root: &Path,
+    dir: &Path,
+    languages: &mut BTreeSet<String>,
+    top_level_dirs: &mut BTreeSet<String>,
+    has_root_level_files: &mut bool,
+) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if path.is_dir() {
+            if EXCLUDED_DIRS.contains(&name.as_str()) || name.starts_with('.') {
+                continue;
+            }
+            walk_detect(root, &path, languages, top_level_dirs, has_root_level_files);
+            continue;
+        }
+        let Some(lang) = SourceLanguage::from_path(&path) else {
+            continue;
+        };
+        languages.insert(language_label(lang).to_string());
+        let rel = path.strip_prefix(root).unwrap_or(&path);
+        let mut components = rel.components();
+        let first = components.next();
+        if components.next().is_some() {
+            // Nested file: the 1st component of the relative path
+            // is the detected root directory.
+            if let Some(std::path::Component::Normal(top)) = first {
+                top_level_dirs.insert(top.to_string_lossy().into_owned());
+            }
+        } else {
+            *has_root_level_files = true;
+        }
+    }
+}
+
+fn language_label(lang: SourceLanguage) -> &'static str {
+    match lang {
+        SourceLanguage::Python => "python",
+        SourceLanguage::Java => "java",
+        SourceLanguage::JavaScript => "javascript",
+        SourceLanguage::TypeScript => "typescript",
+        SourceLanguage::Php => "php",
+        SourceLanguage::CSharp => "csharp",
+        SourceLanguage::Html => "html",
+        SourceLanguage::Yaml => "yaml",
+        SourceLanguage::Dockerfile => "dockerfile",
+    }
+}
+
+/// Reads `paths.include`/`paths.exclude` from an existing
+/// `audit.config.json` at the project root. `None` if the file is absent,
+/// unreadable, or not valid JSON — in all these cases,
+/// the caller falls back to auto-detection or the defaults.
+pub fn read_paths_config(root: &Path) -> Option<(Vec<String>, Vec<String>)> {
+    let content = std::fs::read_to_string(root.join("audit.config.json")).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&content).ok()?;
+    let paths = json.get("paths")?;
+    let as_string_vec = |key: &str| -> Vec<String> {
+        paths
+            .get(key)
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    Some((as_string_vec("include"), as_string_vec("exclude")))
+}
+
+/// Reads `rules.disabled` (list of rule ids) from an existing
+/// `audit.config.json` at the project root — ticket #40/spec #27 (section
+/// silently ignored until now, only `paths.*` was read). Empty if
+/// the file is absent, unreadable, invalid, or does not contain this
+/// section — same contract as `read_paths_config`, but returns
+/// `Vec<String>` directly (no `Option`): an absent section and
+/// an absent file must produce the same result for the caller
+/// (empty list), which does not need to distinguish them, unlike
+/// `read_paths_config` where the absence of the file triggers
+/// interactive auto-detection.
+///
+/// Does NOT resolve the CLI priority `--disable-rule` > file > default:
+/// that resolution lives in the caller (`main.rs::run_scan_command`),
+/// this module only reads.
+pub fn read_disabled_rules_config(root: &Path) -> Vec<String> {
+    let Ok(content) = std::fs::read_to_string(root.join("audit.config.json")) else {
+        return Vec::new();
+    };
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return Vec::new();
+    };
+    json.get("rules")
+        .and_then(|rules| rules.get("disabled"))
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Alias between the category name on the `audit.config.json` side (key
+/// `architecture`, inherited from the Python naming
+/// `sca/config.py::DEFAULT_CONFIG["categories"]`) and the `category`
+/// value actually present in `.sca` rules (`arch`, short
+/// name, cf. `rules/builtin/*/arch/`). Without this alias,
+/// `categories.architecture.enabled` would never match any rule
+/// — the same naming deviation already implicit for `--only-category`, which
+/// expects `arch` and not `architecture`.
+fn normalize_category_name(name: &str) -> String {
+    if name.eq_ignore_ascii_case("architecture") {
+        "arch".to_string()
+    } else {
+        name.to_lowercase()
+    }
+}
+
+/// Reads `categories.<name>.enabled` from an existing `audit.config.json`
+/// at the project root — ticket #41/spec #27. Mirror of
+/// `AuditRunner.enabled_categories` on the Python side (`runner.py:104-112`):
+/// a complete map, NOT a translation to `only_category`
+/// (a distinct CLI mechanism, cf. the doc on `ScanConfig::category_overrides`
+/// in `orchestrator.rs` for the detailed justification of this
+/// separation). Empty map if the file is absent, unreadable,
+/// invalid, or does not contain a `categories` section — an entry
+/// absent from the returned map must be treated by the caller as
+/// "enabled by default" (`true`), not as "disabled", exactly
+/// like `enabled_categories.get(cat_key, True)` on the Python side.
+pub fn read_category_overrides_config(root: &Path) -> BTreeMap<String, bool> {
+    let Ok(content) = std::fs::read_to_string(root.join("audit.config.json")) else {
+        return BTreeMap::new();
+    };
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return BTreeMap::new();
+    };
+    let Some(categories) = json.get("categories").and_then(|v| v.as_object()) else {
+        return BTreeMap::new();
+    };
+    categories
+        .iter()
+        .filter_map(|(name, value)| {
+            value
+                .get("enabled")
+                .and_then(|v| v.as_bool())
+                .map(|enabled| (normalize_category_name(name), enabled))
+        })
+        .collect()
+}
+
+/// Reads `thresholds.max_high` from an existing `audit.config.json` at
+/// the project root — ticket #42/spec #27. `0` (current behavior:
+/// failure as soon as at least one HIGH/CRITICAL finding exists) if the
+/// file is absent, unreadable, invalid, or does not contain this
+/// key — same default as on the Python side
+/// (`Audit/sca/cli.py::thresholds.get("max_high", 0)`).
+///
+/// **Accepted deviation from Python, confirmed with the maintainer (2026-09-01)**:
+/// `thresholds.max_medium`/`thresholds.min_health` (also defined
+/// in `sca/config.py::DEFAULT_CONFIG["thresholds"]`) are in
+/// fact NEVER consumed anywhere in the Python code (exhaustive search
+/// of the Python repo — dead config, like the "phantom ids"
+/// of the compliance mappings documented elsewhere in this repo): not
+/// ported here. The `confidence >= 80` filter on HIGH findings
+/// ("verified HIGH", `sca/runner.py:783-791`, which totally excludes
+/// CRITICAL from the count) and the `--fail-on-high` rule
+/// (`sca/cli.py:1200`, which silently disables the whole gate as
+/// soon as `max_high > 0` without this CLI flag, absent on the Rust side)
+/// are also not reproduced — judged too surprising for a
+/// limited benefit. The Rust gate remains unconditional and counts HIGH+CRITICAL
+/// without a confidence filter (already existing behavior, unchanged),
+/// only the threshold becomes configurable.
+pub fn read_max_high_threshold_config(root: &Path) -> i64 {
+    let Ok(content) = std::fs::read_to_string(root.join("audit.config.json")) else {
+        return 0;
+    };
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return 0;
+    };
+    json.get("thresholds")
+        .and_then(|t| t.get("max_high"))
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0)
+}
+
+/// Top-level sections deliberately not supported by
+/// AuditRust as of today — ticket #43/spec #27. CLOSED and
+/// exhaustive list (no heuristic detection of "unknown key", which
+/// would produce false positives on future legitimate keys): `rules`
+/// (ticket #40), `categories` (ticket #41), `thresholds` (ticket #42)
+/// and `paths` (already handled, `read_paths_config`) are deliberately
+/// excluded from it.
+const UNSUPPORTED_CONFIG_SECTIONS: &[&str] = &[
+    "tests",
+    "fixtures",
+    "retention",
+    "database",
+    "brand",
+    "reports",
+];
+
+/// Detects unsupported top-level sections present
+/// in an existing `audit.config.json` at the project root — ticket
+/// #43/spec #27, to warn rather than silently ignore. Sorted list
+/// (reproducible order for the caller, which displays a single
+/// message listing all the offending keys). Empty if the file is
+/// absent, unreadable, invalid, or contains only supported keys.
+pub fn unsupported_config_sections(root: &Path) -> Vec<String> {
+    let Ok(content) = std::fs::read_to_string(root.join("audit.config.json")) else {
+        return Vec::new();
+    };
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return Vec::new();
+    };
+    let Some(top_level) = json.as_object() else {
+        return Vec::new();
+    };
+    let mut found: Vec<String> = UNSUPPORTED_CONFIG_SECTIONS
+        .iter()
+        .filter(|key| top_level.contains_key(**key))
+        .map(|key| key.to_string())
+        .collect();
+    found.sort();
+    found
+}
+
+/// Writes a minimal `audit.config.json` (just `project.name` +
+/// `paths.include`/`paths.exclude`) from a detection — not the
+/// full `DEFAULT_CONFIG` structure on the Python side (brand/reports/
+/// categories/rules/tests/fixtures), out of scope for what affects
+/// file discovery. A richer existing file (written by
+/// Audit itself, or by the Python interactive wizard) remains
+/// compatible: `read_paths_config` only reads `paths.*`.
+pub fn write_audit_config_json(
+    root: &Path,
+    info: &DetectedProjectInfo,
+) -> std::io::Result<PathBuf> {
+    let path = root.join("audit.config.json");
+    let project_name = root
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("project");
+    let json = serde_json::json!({
+        "project": { "name": project_name },
+        "languages": info.languages,
+        "paths": {
+            "include": info.include_paths,
+            "exclude": info.exclude_patterns,
+        }
+    });
+    let mut text = serde_json::to_string_pretty(&json).expect("sérialisation JSON valide");
+    text.push('\n');
+    std::fs::write(&path, text)?;
+    Ok(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn write_file(root: &Path, rel: &str, content: &str) {
+        let path = root.join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, content).unwrap();
+    }
+
+    #[test]
+    fn test_auto_detect_finds_top_level_dirs() {
+        let dir = std::env::temp_dir().join(format!("sast-pc-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        write_file(&dir, "sca/runner.py", "x = 1\n");
+        write_file(&dir, "tests/test_x.py", "x = 1\n");
+        write_file(&dir, ".venv/lib/numpy/core.py", "x = 1\n");
+        write_file(&dir, "node_modules/pkg/index.js", "x = 1;\n");
+
+        let info = auto_detect_project(&dir);
+        assert_eq!(info.languages, vec!["python".to_string()]);
+        assert_eq!(
+            info.include_paths,
+            vec!["sca/".to_string(), "tests/".to_string()]
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_auto_detect_root_level_file_included_as_dot() {
+        let dir = std::env::temp_dir().join(format!("sast-pc-test2-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        write_file(&dir, "main.py", "x = 1\n");
+
+        let info = auto_detect_project(&dir);
+        assert_eq!(info.include_paths, vec![".".to_string()]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_read_paths_config_absent_file_returns_none() {
+        let dir = std::env::temp_dir().join(format!("sast-pc-test3-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(read_paths_config(&dir).is_none());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_read_paths_config_reads_include_and_exclude() {
+        let dir = std::env::temp_dir().join(format!("sast-pc-test4-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        write_file(
+            &dir,
+            "audit.config.json",
+            r#"{"paths": {"include": ["sca/"], "exclude": ["**/vendor/**"]}}"#,
+        );
+        let (include, exclude) = read_paths_config(&dir).expect("fichier présent et valide");
+        assert_eq!(include, vec!["sca/".to_string()]);
+        assert_eq!(exclude, vec!["**/vendor/**".to_string()]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_read_disabled_rules_config_absent_file_returns_empty() {
+        let dir = std::env::temp_dir().join(format!("sast-pc-test6-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(read_disabled_rules_config(&dir).is_empty());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_read_disabled_rules_config_absent_section_returns_empty() {
+        let dir = std::env::temp_dir().join(format!("sast-pc-test7-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        write_file(
+            &dir,
+            "audit.config.json",
+            r#"{"paths": {"include": ["sca/"]}}"#,
+        );
+        assert!(read_disabled_rules_config(&dir).is_empty());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_read_disabled_rules_config_reads_rules_disabled() {
+        let dir = std::env::temp_dir().join(format!("sast-pc-test8-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        write_file(
+            &dir,
+            "audit.config.json",
+            r#"{"rules": {"disabled": ["eval_usage", "base64_eval"]}}"#,
+        );
+        assert_eq!(
+            read_disabled_rules_config(&dir),
+            vec!["eval_usage".to_string(), "base64_eval".to_string()]
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_read_category_overrides_config_absent_file_returns_empty() {
+        let dir = std::env::temp_dir().join(format!("sast-pc-test9-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(read_category_overrides_config(&dir).is_empty());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_read_category_overrides_config_absent_section_returns_empty() {
+        let dir = std::env::temp_dir().join(format!("sast-pc-test10-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        write_file(
+            &dir,
+            "audit.config.json",
+            r#"{"paths": {"include": ["sca/"]}}"#,
+        );
+        assert!(read_category_overrides_config(&dir).is_empty());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_read_category_overrides_config_reads_enabled_flags() {
+        let dir = std::env::temp_dir().join(format!("sast-pc-test11-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        write_file(
+            &dir,
+            "audit.config.json",
+            r#"{"categories": {"security": {"enabled": false}, "ui": {"enabled": true}}}"#,
+        );
+        let overrides = read_category_overrides_config(&dir);
+        assert_eq!(overrides.get("security"), Some(&false));
+        assert_eq!(overrides.get("ui"), Some(&true));
+        assert_eq!(overrides.len(), 2);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_read_category_overrides_config_aliases_architecture_to_arch() {
+        let dir = std::env::temp_dir().join(format!("sast-pc-test12-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        write_file(
+            &dir,
+            "audit.config.json",
+            r#"{"categories": {"architecture": {"enabled": false}}}"#,
+        );
+        let overrides = read_category_overrides_config(&dir);
+        assert_eq!(overrides.get("arch"), Some(&false));
+        assert!(!overrides.contains_key("architecture"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_read_max_high_threshold_config_absent_file_returns_zero() {
+        let dir = std::env::temp_dir().join(format!("sast-pc-test13-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(read_max_high_threshold_config(&dir), 0);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_read_max_high_threshold_config_absent_section_returns_zero() {
+        let dir = std::env::temp_dir().join(format!("sast-pc-test14-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        write_file(
+            &dir,
+            "audit.config.json",
+            r#"{"paths": {"include": ["sca/"]}}"#,
+        );
+        assert_eq!(read_max_high_threshold_config(&dir), 0);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_read_max_high_threshold_config_reads_custom_value() {
+        let dir = std::env::temp_dir().join(format!("sast-pc-test15-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        write_file(
+            &dir,
+            "audit.config.json",
+            r#"{"thresholds": {"max_high": 3}}"#,
+        );
+        assert_eq!(read_max_high_threshold_config(&dir), 3);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_unsupported_config_sections_absent_file_returns_empty() {
+        let dir = std::env::temp_dir().join(format!("sast-pc-test16-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(unsupported_config_sections(&dir).is_empty());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_unsupported_config_sections_none_when_only_supported_keys() {
+        let dir = std::env::temp_dir().join(format!("sast-pc-test17-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        write_file(
+            &dir,
+            "audit.config.json",
+            r#"{"paths": {"include": ["."]}, "rules": {"disabled": []}, "categories": {}, "thresholds": {"max_high": 0}}"#,
+        );
+        assert!(unsupported_config_sections(&dir).is_empty());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_unsupported_config_sections_detects_single_key() {
+        let dir = std::env::temp_dir().join(format!("sast-pc-test18-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        write_file(
+            &dir,
+            "audit.config.json",
+            r#"{"database": {"enabled": true}}"#,
+        );
+        assert_eq!(
+            unsupported_config_sections(&dir),
+            vec!["database".to_string()]
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_unsupported_config_sections_detects_and_sorts_multiple_keys() {
+        let dir = std::env::temp_dir().join(format!("sast-pc-test19-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        write_file(
+            &dir,
+            "audit.config.json",
+            r#"{"reports": {}, "brand": {}, "tests": {"enabled": true}}"#,
+        );
+        assert_eq!(
+            unsupported_config_sections(&dir),
+            vec![
+                "brand".to_string(),
+                "reports".to_string(),
+                "tests".to_string()
+            ]
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_write_then_read_roundtrip() {
+        let dir = std::env::temp_dir().join(format!("sast-pc-test5-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let info = DetectedProjectInfo {
+            languages: vec!["python".to_string()],
+            include_paths: vec!["src/".to_string()],
+            exclude_patterns: vec!["**/vendor/**".to_string()],
+        };
+        write_audit_config_json(&dir, &info).unwrap();
+        let (include, exclude) = read_paths_config(&dir).unwrap();
+        assert_eq!(include, info.include_paths);
+        assert_eq!(exclude, info.exclude_patterns);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+}

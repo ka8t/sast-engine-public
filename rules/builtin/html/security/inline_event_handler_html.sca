@@ -1,0 +1,41 @@
+rule inline_event_handler_html
+  language  html
+  category  security
+  severity  MEDIUM
+  confidence 80
+  match
+    pattern  \bon(error|load|click|mouseover|focus|blur|submit|change|input)\s*=\s*['"](?!return\s)
+    scope    line
+  end
+  metadata
+    cwe    CWE-79
+  end
+  risk
+    en: on* attributes in HTML execute JavaScript directly, vulnerable to XSS (CWE-79).
+    fr: Les attributs on* dans le HTML exécutent du code JavaScript directement, vulnérable au XSS (CWE-79).
+    es: on* attributes in HTML execute JavaScript directly, vulnerable to XSS (CWE-79).
+    de: on* attributes in HTML execute JavaScript directly, vulnerable to XSS (CWE-79).
+  end
+  solution
+    en: Move JavaScript to separate .js files with addEventListener().
+    fr: Déplacer le JavaScript dans des fichiers .js séparés avec addEventListener().
+    es: Move JavaScript to separate .js files with addEventListener().
+    de: Move JavaScript to separate .js files with addEventListener().
+  end
+  benefit
+    en: Reduces attack surface and strengthens application security.
+    fr: Reduit la surface d'attaque et renforce la securite de l'application.
+    es: Reduce la superficie de ataque y refuerza la seguridad de la aplicacion.
+    de: Reduziert die Angriffsflaeche und staerkt die Anwendungssicherheit.
+  end
+  fix_before
+    <button onclick="doStuff()">
+  end
+  fix_after
+    <button id="myBtn">
+    <script>document.getElementById("myBtn").addEventListener("click", doStuff);</script>
+  end
+  requires
+    demo_fallback  true
+  end
+end

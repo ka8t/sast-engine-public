@@ -1,0 +1,45 @@
+rule ci_docker_privileged
+  language  yaml
+  severity  HIGH
+  category  cicd
+  match
+    pattern  (?:--privileged\b|privileged:\s*true)
+    scope    line
+  end
+  metadata
+    cwe    CWE-269
+  end
+  risk
+    en: Running a CI/CD container with privileged mode grants full access to the host kernel, devices, and namespaces — equivalent to root on the host system.
+    fr: Exécuter un conteneur CI/CD en mode privilégié accorde un accès complet au noyau hôte, aux périphériques et aux espaces de noms — équivalent à root sur le système hôte.
+    es: Ejecutar un contenedor CI/CD en modo privilegiado otorga acceso completo al kernel del host, dispositivos y namespaces — equivalente a root en el sistema host.
+    de: Das Ausführen eines CI/CD-Containers im privilegierten Modus gewährt vollen Zugriff auf den Host-Kernel, Geräte und Namespaces — entspricht Root auf dem Hostsystem.
+  end
+  solution
+    en: Remove the --privileged flag. Use specific Linux capabilities (--cap-add) only for the exact functionality required (e.g., NET_ADMIN, SYS_PTRACE).
+    fr: Supprimer le flag --privileged. Utiliser des capacités Linux spécifiques (--cap-add) uniquement pour la fonctionnalité exactement requise (ex : NET_ADMIN, SYS_PTRACE).
+    es: Eliminar el flag --privileged. Usar capacidades Linux específicas (--cap-add) solo para la funcionalidad exactamente requerida (ej: NET_ADMIN, SYS_PTRACE).
+    de: Das --privileged-Flag entfernen. Nur spezifische Linux-Capabilities (--cap-add) für genau die benötigte Funktionalität verwenden (z.B. NET_ADMIN, SYS_PTRACE).
+  end
+  benefit
+    en: Prevents container escape attacks and limits the blast radius of a compromised CI/CD job to the container rather than the host.
+    fr: Prévient les attaques d'évasion de conteneur et limite le rayon d'impact d'un job CI/CD compromis au conteneur plutôt qu'à l'hôte.
+    es: Previene ataques de escape de contenedor y limita el radio de impacto de un job CI/CD comprometido al contenedor en lugar del host.
+    de: Verhindert Container-Escape-Angriffe und begrenzt den Schadensradius eines kompromittierten CI/CD-Jobs auf den Container statt den Host.
+  end
+  fix_before
+    services:
+      docker:
+        image: docker:24-dind
+        options: --privileged
+  end
+  fix_after
+    services:
+      docker:
+        image: docker:24-dind
+        options: --cap-add=SYS_ADMIN
+  end
+  requires
+    demo_fallback  true
+  end
+end

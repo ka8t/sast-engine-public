@@ -1,0 +1,122 @@
+rule taint_xss
+  language  python
+  category  security
+  severity  HIGH
+  confidence 90
+  source  request\.(GET|POST|args|form|json|data)  kind=http
+  source  request\.(query_params|path_params|cookies|headers)  kind=http
+  source  flask\.request\.  kind=http
+  source  Body\s*\(  kind=http
+  source  Query\s*\(  kind=http
+  source  request\.query_string  kind=http
+  source  request\.cookies  kind=http
+  source  request\.url  kind=http
+  source  request\.path  kind=http
+  source  request\.remote_addr  kind=http
+  source  request\.user_agent  kind=http
+  source  request\.referrer  kind=http
+  source  request\.content_type  kind=http
+  source  request\.get_json\s*\(  kind=http
+  source  request\.values  kind=http
+  source  request\.cookies\.get\s*\(  kind=http
+  source  request\.cookies\[  kind=http
+  source  request\.form\.getlist\s*\(  kind=http
+  source  request\.args\.getlist\s*\(  kind=http
+  source  wrapped\.get_form_parameter\s*\(  kind=http
+  source  wrapped\.get_query_parameter\s*\(  kind=http
+  source  wrapped\.get_cookie\s*\(  kind=http
+  source  wrapped\.get_header\s*\(  kind=http
+  source  helpers\.utils\.get_parameter\s*\(  kind=http
+  source  helpers\.utils\.get_parameter_list\s*\(  kind=http
+  sink    Markup\s*\(
+  sink    Html\.Raw\s*\(
+  sink    mark_safe\s*\(
+  sink    flask\.Markup\s*\(
+  sink    render_template_string\s*\(
+  sink    \.write\s*\(
+  sink    ^\s*return\s+f["']
+  sink    ^\s*return\s+[A-Z][A-Z0-9_]*\s*$
+  sink    ^\s*[A-Z][A-Z0-9_]*\s*\+?=\s*f["']
+  sanitizer  html\.escape
+  sanitizer  bleach\.clean
+  sanitizer  markupsafe\.escape
+  sanitizer  flask\.escape
+  sanitizer  helpers\.utils\.escape_for_html
+  sanitizer  make_response\s*\(\s*\(\s*\w+\s*,\s*\{
+  sanitizer  \bescape_for_html\s*\(
+  sanitizer  \bescape\s*\(
+  sanitizer  \bquote\s*\(
+  sanitizer  \.startswith\s*\(
+  sanitizer  \.endswith\s*\(
+  sanitizer  \.isalnum\s*\(
+  sanitizer  \.isalpha\s*\(
+  sanitizer  re\.match
+  sanitizer  re\.fullmatch
+  passthrough  str\s*\(
+  passthrough  \.strip\s*\(
+  passthrough  \.lstrip\s*\(
+  passthrough  \.rstrip\s*\(
+  passthrough  \.lower\s*\(
+  passthrough  \.upper\s*\(
+  passthrough  \.encode\s*\(
+  passthrough  \.decode\s*\(
+  passthrough  urllib\.parse\.unquote
+  passthrough  urllib\.parse\.quote
+  passthrough  json\.loads
+  passthrough  json\.dumps
+  passthrough  base64\.b64decode
+  passthrough  \.replace\s*\(
+  passthrough  \.format\s*\(
+  passthrough  urllib\.parse\.unquote_plus
+  passthrough  base64\.b64encode
+  passthrough  base64\.urlsafe_b64decode
+  passthrough  base64\.urlsafe_b64encode
+  passthrough  configparser.*\.get\s*\(
+  passthrough  \.encode\s*\(.*utf
+  passthrough  \.decode\s*\(.*utf
+  passthrough  str\.maketrans
+  passthrough  \.translate\s*\(
+  passthrough  \.split\s*\(
+  passthrough  \.join\s*\(
+  passthrough  \[\d+:-?\d*\]
+  passthrough  request_wrapper\s*\(
+  message
+    en: Cross-Site Scripting — tainted data rendered in HTML without escaping
+    fr: Cross-Site Scripting — données non fiables rendues en HTML sans échappement
+  end
+  risk
+    en: An attacker can inject malicious scripts that execute in other users' browsers.
+    fr: Un attaquant peut injecter des scripts malveillants qui s'exécutent dans le navigateur des autres utilisateurs.
+    es: Un atacante puede inyectar scripts maliciosos que se ejecutan en los navegadores de otros usuarios.
+    de: Ein Angreifer kann boesartige Skripte einschleusen, die in den Browsern anderer Benutzer ausgefuehrt werden.
+  end
+  solution
+    en: Escape all user input before rendering in HTML. Use framework auto-escaping or html.escape().
+    fr: Échappez toutes les entrées utilisateur avant le rendu HTML. Utilisez l'auto-échappement du framework.
+    es: Escapar toda la entrada de usuario antes de renderizar en HTML. Usar el auto-escapado del framework o html.escape().
+    de: Alle Benutzereingaben vor dem Rendern in HTML escapen. Framework-Auto-Escaping oder html.escape() verwenden.
+  end
+  metadata
+    cwe    CWE-79
+    owasp  A03:2021
+    iso27001  A.8.28
+  end
+  benefit
+    en: Reduces attack surface and strengthens application security.
+    fr: Reduit la surface d'attaque et renforce la securite de l'application.
+    es: Reduce la superficie de ataque y refuerza la seguridad de la aplicacion.
+    de: Reduziert die Angriffsflaeche und staerkt die Anwendungssicherheit.
+  end
+  fix_before
+    name = request.args.get("name")
+    return Markup(f"<h1>Hello {name}</h1>")
+  end
+  fix_after
+    from markupsafe import escape
+    name = request.args.get("name")
+    return Markup(f"<h1>Hello {escape(name)}</h1>")
+  end
+  requires
+    demo_fallback  true
+  end
+end

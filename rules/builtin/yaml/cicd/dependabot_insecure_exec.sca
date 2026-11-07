@@ -1,0 +1,44 @@
+rule dependabot_insecure_exec
+  language  yaml
+  severity  HIGH
+  category  cicd
+  match
+    pattern  insecure-external-code-execution:\s*allow
+    scope    line
+  end
+  metadata
+    cwe    CWE-78
+  end
+  risk
+    en: Setting insecure-external-code-execution to allow in Dependabot configuration permits running unverified external scripts during dependency updates, enabling supply chain attacks.
+    fr: Définir insecure-external-code-execution à allow dans la configuration Dependabot permet l'exécution de scripts externes non vérifiés lors des mises à jour de dépendances, ouvrant la voie aux attaques supply chain.
+    es: Establecer insecure-external-code-execution en allow en la configuración de Dependabot permite ejecutar scripts externos no verificados durante las actualizaciones de dependencias, habilitando ataques de supply chain.
+    de: insecure-external-code-execution in der Dependabot-Konfiguration auf allow zu setzen, erlaubt die Ausführung nicht verifizierter externer Skripte bei Abhängigkeitsupdates und ermöglicht Supply-Chain-Angriffe.
+  end
+  solution
+    en: Remove insecure-external-code-execution: allow from dependabot.yml. If needed, review and approve dependency update scripts explicitly.
+    fr: Supprimer insecure-external-code-execution: allow de dependabot.yml. Si nécessaire, examiner et approuver explicitement les scripts de mise à jour des dépendances.
+    es: Eliminar insecure-external-code-execution: allow de dependabot.yml. Si es necesario, revisar y aprobar explícitamente los scripts de actualización de dependencias.
+    de: insecure-external-code-execution: allow aus dependabot.yml entfernen. Falls nötig, Abhängigkeits-Update-Skripte explizit prüfen und genehmigen.
+  end
+  benefit
+    en: Prevents execution of unverified external code during automated dependency updates, protecting the CI/CD pipeline from supply chain attacks.
+    fr: Prévient l'exécution de code externe non vérifié lors des mises à jour automatisées des dépendances, protégeant le pipeline CI/CD des attaques supply chain.
+    es: Previene la ejecución de código externo no verificado durante las actualizaciones automatizadas de dependencias, protegiendo el pipeline CI/CD de ataques de supply chain.
+    de: Verhindert die Ausführung von nicht verifiziertem externem Code bei automatisierten Abhängigkeitsupdates und schützt die CI/CD-Pipeline vor Supply-Chain-Angriffen.
+  end
+  fix_before
+    updates:
+      - package-ecosystem: pip
+        directory: /
+        insecure-external-code-execution: allow
+  end
+  fix_after
+    updates:
+      - package-ecosystem: pip
+        directory: /
+  end
+  requires
+    demo_fallback  true
+  end
+end

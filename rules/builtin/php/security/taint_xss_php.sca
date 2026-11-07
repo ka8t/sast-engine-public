@@ -1,0 +1,68 @@
+rule taint_xss_php
+  language  php
+  category  security
+  severity  HIGH
+  confidence 85
+  source  \$_GET\[  kind=http
+  source  \$_POST\[  kind=http
+  source  \$_REQUEST\[  kind=http
+  source  \$_COOKIE\[  kind=http
+  source  \$_SERVER\[  kind=http
+  source  php://input  kind=http
+  sink    echo\s+
+  sink    print\s*\(
+  sink    printf\s*\(
+  sink    print_r\s*\(
+  # Rust-only addition (2026-11-04 resync with the Python rule): `echo`/`print` as language constructs, also without a
+  # following space or parenthesis (`echo$x`, `print $x`).
+  sink    \becho\b
+  sink    \bprint\b
+  sanitizer  htmlspecialchars
+  sanitizer  htmlentities
+  sanitizer  strip_tags
+  sanitizer  nl2br
+  passthrough  urldecode
+  passthrough  rawurldecode
+  passthrough  trim
+  passthrough  ltrim
+  passthrough  rtrim
+  passthrough  strtolower
+  passthrough  strtoupper
+  passthrough  substr
+  passthrough  str_replace
+  message
+    en: User-controlled input is written to HTML output without encoding — Cross-Site Scripting (XSS) risk.
+    fr: Une donnée contrôlée par l'utilisateur est affichée sans encodage — risque de Cross-Site Scripting (XSS).
+  end
+  risk
+    en: An attacker can inject malicious JavaScript that executes in the victim's browser, leading to session hijacking, credential theft, or defacement.
+    fr: Un attaquant peut injecter du JavaScript malveillant exécuté dans le navigateur de la victime, entraînant un vol de session, un vol d'identifiants ou une dégradation de page.
+    es: Un atacante puede inyectar JavaScript malicioso que se ejecuta en el navegador de la víctima, provocando robo de sesión, robo de credenciales o desfiguración.
+    de: Ein Angreifer kann schädliches JavaScript einschleusen, das im Browser des Opfers ausgeführt wird, und so Session-Hijacking, Diebstahl von Anmeldedaten oder Defacement verursachen.
+  end
+  solution
+    en: Encode all user-supplied data before outputting it with htmlspecialchars($val, ENT_QUOTES, 'UTF-8') or htmlentities().
+    fr: Encodez toutes les données fournies par l'utilisateur avant de les afficher avec htmlspecialchars($val, ENT_QUOTES, 'UTF-8') ou htmlentities().
+    es: Codifique todos los datos suministrados por el usuario antes de mostrarlos con htmlspecialchars($val, ENT_QUOTES, 'UTF-8') o htmlentities().
+    de: Kodieren Sie alle benutzerseitig gelieferten Daten vor der Ausgabe mit htmlspecialchars($val, ENT_QUOTES, 'UTF-8') oder htmlentities().
+  end
+  metadata
+    cwe    CWE-79
+    owasp  A03:2021
+  end
+  benefit
+    en: Reduces attack surface and strengthens application security.
+    fr: Réduit la surface d'attaque et renforce la sécurité de l'application.
+    es: Reduce la superficie de ataque y refuerza la seguridad de la aplicación.
+    de: Reduziert die Angriffsfläche und stärkt die Anwendungssicherheit.
+  end
+  fix_before
+    echo $_GET['name'];
+  end
+  fix_after
+    echo htmlspecialchars($_GET['name'], ENT_QUOTES, 'UTF-8');
+  end
+  requires
+    demo_fallback  true
+  end
+end

@@ -1,0 +1,109 @@
+<div class="section comparison-section open" id="section-comparison" data-nav-section="{{i18n_comparison}}">
+    <div class="section-header" onclick="toggleSection('section-comparison')">
+        <span class="section-icon">📊</span>
+        <h2>{{i18n_comparison}}</h2>
+        <span class="badge badge-info">{{baseline_date}}</span>
+        <a href="#sommaire" class="back-to-toc" onclick="event.stopPropagation()">↑ {{i18n_toc}}</a>
+        <span class="chevron">▶</span>
+    </div>
+    <div class="section-content">
+        <div class="cmp-trend-banner cmp-trend-{{trend_class}}">
+            <span class="cmp-trend-icon">{{trend_icon}}</span>
+            <div class="cmp-trend-text">
+                <strong class="cmp-trend-label">{{trend_label}}</strong>
+                <span class="cmp-trend-detail">{{trend_detail}}</span>
+            </div>
+            <div class="cmp-trend-totals">
+                <div class="cmp-trend-cell">
+                    <span class="cmp-trend-cell-label">{{i18n_baseline}}</span>
+                    <span class="cmp-trend-cell-value">{{baseline_total}}</span>
+                </div>
+                <span class="cmp-trend-arrow">→</span>
+                <div class="cmp-trend-cell">
+                    <span class="cmp-trend-cell-label">{{i18n_current}}</span>
+                    <span class="cmp-trend-cell-value">{{current_total}}</span>
+                </div>
+            </div>
+        </div>
+        <div class="cmp-sev-grid">
+            <div class="cmp-sev-card cmp-sev-card-high">
+                <div class="cmp-sev-header">
+                    <span class="sev-tag sev-high">HIGH</span>
+                    {{delta_high}}
+                </div>
+                <div class="cmp-sev-body">
+                    <div class="cmp-sev-stat">
+                        <span class="cmp-sev-stat-label">{{i18n_baseline}}</span>
+                        <span class="cmp-sev-stat-value">{{baseline_high}}</span>
+                    </div>
+                    <span class="cmp-sev-stat-arrow">→</span>
+                    <div class="cmp-sev-stat">
+                        <span class="cmp-sev-stat-label">{{i18n_current}}</span>
+                        <span class="cmp-sev-stat-value cmp-sev-now">{{total_high}}</span>
+                    </div>
+                </div>
+            </div>
+            <div class="cmp-sev-card cmp-sev-card-medium">
+                <div class="cmp-sev-header">
+                    <span class="sev-tag sev-medium">MEDIUM</span>
+                    {{delta_medium}}
+                </div>
+                <div class="cmp-sev-body">
+                    <div class="cmp-sev-stat">
+                        <span class="cmp-sev-stat-label">{{i18n_baseline}}</span>
+                        <span class="cmp-sev-stat-value">{{baseline_medium}}</span>
+                    </div>
+                    <span class="cmp-sev-stat-arrow">→</span>
+                    <div class="cmp-sev-stat">
+                        <span class="cmp-sev-stat-label">{{i18n_current}}</span>
+                        <span class="cmp-sev-stat-value cmp-sev-now">{{total_medium}}</span>
+                    </div>
+                </div>
+            </div>
+            <div class="cmp-sev-card cmp-sev-card-low">
+                <div class="cmp-sev-header">
+                    <span class="sev-tag sev-low">LOW</span>
+                    {{delta_low}}
+                </div>
+                <div class="cmp-sev-body">
+                    <div class="cmp-sev-stat">
+                        <span class="cmp-sev-stat-label">{{i18n_baseline}}</span>
+                        <span class="cmp-sev-stat-value">{{baseline_low}}</span>
+                    </div>
+                    <span class="cmp-sev-stat-arrow">→</span>
+                    <div class="cmp-sev-stat">
+                        <span class="cmp-sev-stat-label">{{i18n_current}}</span>
+                        <span class="cmp-sev-stat-value cmp-sev-now">{{total_low}}</span>
+                    </div>
+                </div>
+            </div>
+            <div class="cmp-sev-card cmp-sev-card-info">
+                <div class="cmp-sev-header">
+                    <span class="sev-tag sev-info">INFO</span>
+                    {{delta_info}}
+                </div>
+                <div class="cmp-sev-body">
+                    <div class="cmp-sev-stat">
+                        <span class="cmp-sev-stat-label">{{i18n_baseline}}</span>
+                        <span class="cmp-sev-stat-value">{{baseline_info}}</span>
+                    </div>
+                    <span class="cmp-sev-stat-arrow">→</span>
+                    <div class="cmp-sev-stat">
+                        <span class="cmp-sev-stat-label">{{i18n_current}}</span>
+                        <span class="cmp-sev-stat-value cmp-sev-now">{{total_info}}</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="comparison-details">
+            <div class="comparison-column new-issues">
+                <h3>➕ {{i18n_new_issues}} <span class="badge badge-high">{{new_count}}</span></h3>
+                {{new_items}}
+            </div>
+            <div class="comparison-column resolved-issues">
+                <h3>✅ {{i18n_resolved_issues}} <span class="badge badge-success">{{resolved_count}}</span></h3>
+                {{resolved_items}}
+            </div>
+        </div>
+    </div>
+</div>

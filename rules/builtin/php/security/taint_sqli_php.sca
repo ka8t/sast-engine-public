@@ -1,0 +1,80 @@
+rule taint_sqli_php
+  language  php
+  category  security
+  severity  HIGH
+  confidence 85
+  source  \$_GET\[  kind=http
+  source  \$_POST\[  kind=http
+  source  \$_REQUEST\[  kind=http
+  source  \$_COOKIE\[  kind=http
+  source  \$_SERVER\[  kind=http
+  source  \$_FILES\[  kind=http
+  source  php://input  kind=http
+  source  file_get_contents\s*\(\s*['"]php://input  kind=http
+  sink    mysqli_query\s*\(
+  sink    ->query\s*\(
+  sink    pg_query\s*\(
+  # Rust-only addition (2026-11-04 resync with the Python rule): legacy `mysql_query()` and PDO `->exec()` (direct execution
+  # of a raw SQL string).
+  sink    \bmysql_query\s*\(
+  sink    ->exec\(
+  sanitizer  mysqli_real_escape_string
+  sanitizer  PDO::prepare
+  sanitizer  ->prepare\s*\(
+  sanitizer  intval\s*\(
+  # Rust-only addition (2026-11-04 resync with the Python rule): `->execute()` (PDOStatement, parameters bound separately) is the
+  # SAFE form, distinct from `->exec()` above. Deliberate deviation: the
+  # Python rule lists `->execute\s*\(` as a SINK, which flags the correct
+  # parameterized form `$stmt->execute([$_GET['q']])` — false positive
+  # found while calibrating the Rust PHP engine (2026-08-26); `->exec\(`
+  # alone would also match "->execute(" as an unanchored substring.
+  sanitizer  ->execute\(
+  passthrough  urldecode
+  passthrough  rawurldecode
+  passthrough  trim
+  passthrough  ltrim
+  passthrough  rtrim
+  passthrough  strtolower
+  passthrough  strtoupper
+  passthrough  substr
+  passthrough  str_replace
+  passthrough  json_decode
+  passthrough  base64_decode
+  passthrough  htmlspecialchars_decode
+  message
+    en: SQL Injection — tainted data flows into a database query
+    fr: Injection SQL — données non fiables atteignent une requête de base de données
+  end
+  risk
+    en: An attacker can read, modify, or delete database records.
+    fr: Un attaquant peut lire, modifier ou supprimer des enregistrements de la base de données.
+    es: Un atacante puede leer, modificar o eliminar registros de la base de datos.
+    de: Ein Angreifer kann Datenbankeintraege lesen, aendern oder loeschen.
+  end
+  solution
+    en: Use parameterized queries with placeholders (%s, ?).
+    fr: Utilisez des requêtes paramétrées avec des placeholders (%s, ?).
+    es: Usar consultas parametrizadas con placeholders (%s, ?).
+    de: Verwenden Sie parametrisierte Abfragen mit Platzhaltern (%s, ?).
+  end
+  metadata
+    cwe    CWE-89
+    owasp  A03:2021
+  end
+  benefit
+    en: Reduces attack surface and strengthens application security.
+    fr: Reduit la surface d'attaque et renforce la securite de l'application.
+    es: Reduce la superficie de ataque y refuerza la seguridad de la aplicacion.
+    de: Reduziert die Angriffsflaeche und staerkt die Anwendungssicherheit.
+  end
+  fix_before
+    $pdo->query("SELECT * FROM t WHERE id=" . $val);
+  end
+  fix_after
+    $stmt = $pdo->prepare("SELECT * FROM t WHERE id=?");
+    $stmt->execute([$val]);
+  end
+  requires
+    demo_fallback  true
+  end
+end

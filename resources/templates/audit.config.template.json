@@ -1,0 +1,144 @@
+{
+  "_comment": "Configuration du script d'audit - Copier vers audit.config.json à la racine du projet",
+
+  "brand": {
+    "_comment": "Identité de l'outil — noms affichés dans le rapport, la console et les fichiers générés",
+    "_comment_logo": "Logo du client (SVG, PNG, JPG) — chemin relatif au projet ou absolu. Remplace le favicon et le logo header du rapport.",
+    "_comment_colors": "Couleurs du header du rapport (format #rrggbb). primary_color = début du gradient, accent_color = fin.",
+    "_comment_website_url": "URL affichée dans les exports SARIF (informationUri). Si null, utilise https://codefixture.com.",
+    "tool_name": "StaticCodeAudit",
+    "company_name": "CodeFixture",
+    "prefix": "SCA",
+    "logo": null,
+    "primary_color": "#1e3a5f",
+    "accent_color": "#2c5282",
+    "website_url": null
+  },
+
+  "project": {
+    "_comment": "Informations du projet affichées dans le rapport",
+    "_comment_id": "UUID unique généré automatiquement au --init (ne pas modifier)",
+    "id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+    "name": "Mon Projet",
+    "version": "1.0",
+    "description": "Description du projet"
+  },
+
+  "_comment_languages": "Langages du projet — contrôle quelles règles s'exécutent. Valeurs supportées : python, javascript, html, java, csharp, php, yaml. javascript couvre aussi .jsx, .ts, .tsx, .mjs. csharp scanne .cs. php scanne .php et .inc. yaml scanne .yml et .yaml (règles CI/CD).",
+  "languages": ["python", "javascript", "html"],
+
+  "_comment_versions": "Versions des langages/frameworks (optionnel) — utilisé pour les règles deprecated API version-aware. Auto-détecté depuis pyproject.toml, pom.xml, .csproj, composer.json, package.json si absent.",
+  "versions": {},
+
+  "paths": {
+    "_comment_include": "Dossiers à scanner (chemins relatifs depuis la racine)",
+    "include": [
+      "src/",
+      "app/",
+      "lib/"
+    ],
+    "_comment_exclude": "Patterns à ignorer (node_modules, vendor, etc.)",
+    "exclude": [
+      "node_modules/",
+      "vendor/",
+      ".venv/",
+      "__pycache__/",
+      "*.min.js",
+      "*.bundle.js"
+    ]
+  },
+
+  "reports": {
+    "_comment": "Configuration des rapports générés",
+    "output_dir": "docs/audit-reports",
+    "history_dir": "docs/audit-reports/audit-datas",
+    "max_history": 10,
+    "language": "en"
+  },
+
+  "categories": {
+    "_comment": "enabled: activer/désactiver la catégorie | weight: poids dans le score (1-5)",
+    "security": { "enabled": true, "weight": 3 },
+    "architecture": { "enabled": true, "weight": 2 },
+    "ui": { "enabled": true, "weight": 1 },
+    "ux": { "enabled": true, "weight": 1 },
+    "maintenance": { "enabled": true, "weight": 1 },
+    "dependencies": { "enabled": false, "weight": 2 },
+    "cicd": { "enabled": false, "weight": 2, "_comment": "CI/CD pipeline audit (GitHub Actions, GitLab CI). Requires 'yaml' in languages." }
+  },
+
+  "rules": {
+    "_comment_disabled": "Liste des règles à ignorer (ex: [\"TODO/FIXME\", \"console.log\"])",
+    "disabled": [],
+    "_comment_patterns": "Chemins personnalisés pour certaines règles",
+    "custom_patterns": {}
+  },
+
+  "tests": {
+    "_comment": "Configuration des tests unitaires (optionnel)",
+    "enabled": true,
+    "tests_dir": "tests/",
+    "command": "python -m pytest {tests_dir} -v --tb=short"
+  },
+
+  "fixtures": {
+    "_comment": "Configuration des fixtures pour validation des règles d'audit",
+    "_comment_note": "Les fixtures sont chargées depuis Audit/projects/{uuid}/fixtures/ (basé sur project.id)",
+    "_comment_include_generic": "Si true, inclut aussi les fixtures génériques en fallback",
+    "include_generic": true,
+    "_comment_parallel": "Parallélisation de la validation des fixtures",
+    "parallel": true,
+    "parallel_workers": 4,
+    "fixture_timeout": 30
+  },
+
+  "thresholds": {
+    "_comment": "Seuils pour le score de santé et les alertes CI/CD",
+    "max_high": 0,
+    "max_medium": 10,
+    "min_health": 80,
+    "health_good": 90,
+    "health_warning": 70
+  },
+
+  "retention": {
+    "_comment": "Automatic cleanup of old reports. mode: 'count' (keep max_count), 'days' (keep max_days), 'both' (apply both), null/absent (no cleanup).",
+    "_comment_dry_run": "Use --retention-dry-run CLI flag to preview deletions without removing files.",
+    "mode": null,
+    "max_count": 10,
+    "max_days": 90
+  },
+
+  "database": {
+    "_comment": "Audit du schéma PostgreSQL - Le schéma est stocké dans SCA-DATA (pas de fichier séparé)",
+    "enabled": false,
+    "host": "localhost",
+    "port": "5432",
+    "database": "",
+    "user": "",
+    "_comment_password": "Le mot de passe est lu depuis le fichier .env (jamais dans ce fichier JSON)",
+    "password_env_file": ".env",
+    "password_env_var": "DB_PASSWORD",
+    "_comment_track": "Éléments du schéma à suivre",
+    "track": {
+      "tables": true,
+      "columns": true,
+      "constraints": true,
+      "indexes": true,
+      "enums": true
+    },
+    "_comment_severity": "Sévérité des différents types de changements",
+    "severity": {
+      "column_dropped": "HIGH",
+      "table_dropped": "HIGH",
+      "type_changed": "MEDIUM",
+      "column_added": "LOW",
+      "index_added": "INFO"
+    },
+    "_comment_code_analysis": "Analyse du code pour détecter les usages des éléments modifiés/supprimés",
+    "code_analysis": {
+      "enabled": true,
+      "escalate_severity": true
+    }
+  }
+}

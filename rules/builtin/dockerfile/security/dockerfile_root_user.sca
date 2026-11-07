@@ -1,0 +1,44 @@
+rule dockerfile_root_user
+  language  dockerfile
+  category  security
+  severity  HIGH
+  requires
+    has      (?:FROM|RUN|CMD|ENTRYPOINT)
+    not_has  (?:USER\s+(?!root)\w+)
+  end
+  metadata
+    cwe    CWE-250
+  end
+  risk
+    en: Container runs as root user by default, increasing blast radius if compromised (CWE-250).
+    fr: Le conteneur s'exécute en root par défaut, augmentant le rayon d'impact en cas de compromission (CWE-250).
+    es: El contenedor se ejecuta como root por defecto, aumentando el radio de impacto en caso de compromiso (CWE-250).
+    de: Container läuft standardmäßig als Root, was den Explosionsradius bei Kompromittierung erhöht (CWE-250).
+  end
+  solution
+    en: Add a USER directive with a non-root user (e.g., USER appuser) after installing dependencies.
+    fr: Ajouter une directive USER avec un utilisateur non-root (ex: USER appuser) après l'installation des dépendances.
+    es: Agregar directiva USER con un usuario no-root (ej: USER appuser) después de instalar dependencias.
+    de: USER-Direktive mit Nicht-Root-Benutzer hinzufügen (z.B. USER appuser) nach Installation der Abhängigkeiten.
+  end
+  benefit
+    en: Reduces attack surface and strengthens application security.
+    fr: Reduit la surface d'attaque et renforce la securite de l'application.
+    es: Reduce la superficie de ataque y refuerza la seguridad de la aplicacion.
+    de: Reduziert die Angriffsflaeche und staerkt die Anwendungssicherheit.
+  end
+  fix_before
+    FROM node:20-alpine
+    RUN npm install
+    CMD ["node", "app.js"]
+  end
+  fix_after
+    FROM node:20-alpine
+    RUN npm install
+    USER node
+    CMD ["node", "app.js"]
+  end
+  requires
+    demo_fallback  true
+  end
+end

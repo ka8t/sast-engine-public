@@ -1,0 +1,10 @@
+<div class="finding {{severity_class}} {{taint_class}}" data-rule-key="{{rule_key}}" data-file="{{file}}" data-code-hash="{{code_hash}}">
+    <div class="finding-header">
+        <span class="finding-rule">{{rule}}</span>
+        <button class="suppress-btn" onclick="toggleSuppression(this)" title="{{i18n_suppress_title}}">🚫</button>
+        <span class="finding-category"><span class="category-icon">{{category_icon}}</span> {{category_name}}</span>
+        <span class="finding-file">{{file}}:{{line}}</span>{{language_badge}}{{committer_display}}{{taint_badges}}
+    </div>
+    <div class="finding-code-block">{{context_before_html}}<div class="finding-code-highlight" title="Ligne détectée (L{{line}})">{{code}}</div>{{context_after_html}}</div>
+    {{taint_trace}}
+</div>

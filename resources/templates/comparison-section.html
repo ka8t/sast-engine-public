@@ -1,0 +1,20 @@
+<div class="comparison-section">
+    <h3>📊 {{i18n_comparison}}</h3>
+    <p class="comparison-date">Baseline : {{baseline_date}}</p>
+    <div class="comparison-grid">
+        <div class="comparison-stat new">
+            <div class="comparison-value">{{new_count}}</div>
+            <div class="comparison-label">{{i18n_new}}</div>
+        </div>
+        <div class="comparison-stat resolved">
+            <div class="comparison-value">{{resolved_count}}</div>
+            <div class="comparison-label">{{i18n_resolved}}</div>
+        </div>
+        <div class="comparison-stat persistent">
+            <div class="comparison-value">{{persistent_count}}</div>
+            <div class="comparison-label">{{i18n_persistent}}</div>
+        </div>
+    </div>
+    {{new_items}}
+    {{resolved_items}}
+</div>

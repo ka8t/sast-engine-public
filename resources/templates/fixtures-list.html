@@ -1,0 +1,24 @@
+<div class="sub-group fixtures-list">
+    <div class="sub-group-header" onclick="this.parentElement.classList.toggle('open')">
+        <span class="sub-group-icon">🧪</span>
+        <h3>{{i18n_detail_title}}</h3>
+        <span class="sub-chevron">▶</span>
+    </div>
+    <div class="sub-group-content">
+        <div class="fixtures-table-wrapper">
+            <table class="fixtures-table">
+                <thead>
+                    <tr>
+                        <th>{{i18n_fixture}}</th>
+                        <th>{{i18n_type}}</th>
+                        <th>{{i18n_expected_rule}}</th>
+                        <th>{{i18n_status}}</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{rows}}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>

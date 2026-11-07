@@ -1,0 +1,10 @@
+<div class="section {{severity_class}}" id="{{severity_id}}">
+    <div class="section-header" onclick="toggleSection('{{severity_id}}')">
+        <span class="section-icon">{{icon}}</span>
+        <h2><span class="badge badge-{{severity_class}}">{{severity}}</span> {{count}} {{issues_label}}</h2>
+        <span class="chevron">▶</span>
+    </div>
+    <div class="section-content">
+        {{content}}
+    </div>
+</div>

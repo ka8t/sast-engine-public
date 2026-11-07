@@ -1,0 +1,63 @@
+rule taint_codeinj
+  language  php
+  category  security
+  severity  HIGH
+  confidence 90
+  source  \$_GET\[  kind=http
+  source  \$_POST\[  kind=http
+  source  \$_REQUEST\[  kind=http
+  source  \$_COOKIE\[  kind=http
+  source  \$_SERVER\[  kind=http
+  source  php://input  kind=http
+  sink    \beval\s*\(
+  sink    \bassert\s*\(
+  sink    call_user_func\s*\(
+  sink    preg_replace.*\/e
+  sanitizer  is_numeric\s*\(
+  sanitizer  ctype_alpha\s*\(
+  sanitizer  filter_var
+  passthrough  urldecode
+  passthrough  rawurldecode
+  passthrough  trim
+  passthrough  ltrim
+  passthrough  rtrim
+  passthrough  strtolower
+  passthrough  strtoupper
+  passthrough  substr
+  passthrough  str_replace
+  message
+    en: User-controlled input flows into a dynamic code execution function — Code Injection risk.
+    fr: Une donnée contrôlée par l'utilisateur atteint une fonction d'exécution dynamique de code — risque d'injection de code.
+  end
+  risk
+    en: An attacker can execute arbitrary code on the server, leading to full system compromise, data exfiltration, or persistence.
+    fr: Un attaquant peut exécuter du code arbitraire sur le serveur, entraînant une compromission totale du système, une exfiltration de données ou une persistance.
+    es: Un atacante puede ejecutar código arbitrario en el servidor, lo que lleva a un compromiso total del sistema, exfiltración de datos o persistencia.
+    de: Ein Angreifer kann beliebigen Code auf dem Server ausführen und so das System vollständig kompromittieren, Daten exfiltrieren oder Persistenz erlangen.
+  end
+  solution
+    en: Never pass user-supplied input to dynamic code execution functions. Use whitelists of allowed values and avoid eval/exec entirely.
+    fr: Ne transmettez jamais de données utilisateur aux fonctions d'exécution dynamique de code. Utilisez des listes blanches de valeurs autorisées et évitez eval/exec entièrement.
+    es: Nunca pasar datos del usuario a funciones de ejecución dinámica de código. Usar listas blancas de valores permitidos y evitar eval/exec por completo.
+    de: Benutzereingaben niemals an dynamische Code-Ausführungsfunktionen übergeben. Allowlists erlaubter Werte verwenden und eval/exec vollständig vermeiden.
+  end
+  metadata
+    cwe    CWE-94
+    owasp  A03:2021
+  end
+  benefit
+    en: Reduces attack surface and strengthens application security.
+    fr: Réduit la surface d'attaque et renforce la sécurité de l'application.
+    es: Reduce la superficie de ataque y refuerza la seguridad de la aplicación.
+    de: Reduziert die Angriffsfläche und stärkt die Anwendungssicherheit.
+  end
+  fix_before
+    eval($_POST['code']);
+  end
+  fix_after
+    // Utiliser une liste blanche — ne jamais passer de données utilisateur à eval()
+  end
+  requires
+    demo_fallback  true
+  end
+end

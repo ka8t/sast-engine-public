@@ -1,0 +1,15 @@
+<div class="health-cat-card">
+    <div class="health-cat-header">
+        <span class="health-cat-icon">{{cat_icon}}</span>
+        <span class="health-cat-label">{{cat_label}}</span>
+        <span class="health-cat-weight">×{{cat_weight}}</span>
+    </div>
+    <div class="health-cat-score {{cat_color_class}}">{{cat_score}}%</div>
+    <div class="health-cat-details">
+        <span class="health-cat-detail">🔍 {{cat_findings}}</span>
+        <span class="health-cat-detail">✅ {{cat_successes}}</span>
+    </div>
+    <div class="health-cat-bar">
+        <div class="health-cat-fill {{cat_color_class}}" style="width: {{cat_score}}%"></div>
+    </div>
+</div>

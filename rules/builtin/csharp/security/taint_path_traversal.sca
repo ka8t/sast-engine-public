@@ -1,0 +1,78 @@
+rule taint_path_traversal
+  language  csharp
+  category  security
+  severity  HIGH
+  confidence 85
+  source  Request\.Query\[  kind=http
+  source  Request\.QueryString\[  kind=http
+  source  Request\[  kind=http
+  source  Request\.Form\[  kind=http
+  source  Request\.Headers\[  kind=http
+  source  Request\.Cookies  kind=http
+  source  Request\.Body  kind=http
+  source  Request\.Path  kind=http
+  source  HttpContext\.Request  kind=http
+  source  \.QueryString\[  kind=http
+  source  \.Params\[  kind=http
+  source  \.Params\.Get\s*\(  kind=http
+  source  \.Form\[  kind=http
+  source  \.Headers\[  kind=http
+  source  \.Cookies\[  kind=http
+  source  \.Cookies\.Get\s*\(  kind=http
+  source  Environment\.GetEnvironmentVariable\s*\(  kind=env
+  source  \.ReadLine\s*\(  kind=network
+  sink    File\.ReadAllText\s*\(
+  sink    File\.OpenRead\s*\(
+  sink    File\.WriteAllText\s*\(
+  sink    File\.Exists\s*\(
+  sink    new\s+FileStream\s*\(
+  sink    new\s+StreamReader\s*\(
+  sink    Directory\.GetFiles\s*\(
+  sink    Path\.Combine\s*\(
+  sanitizer  Path\.GetFullPath
+  sanitizer  \.NormalizePath
+  passthrough  WebUtility\.UrlDecode
+  passthrough  WebUtility\.HtmlDecode
+  passthrough  Convert\.ToString
+  passthrough  \.Trim\s*\(
+  passthrough  \.ToLower\s*\(
+  passthrough  \.ToUpper\s*\(
+  passthrough  \.Substring\s*\(
+  passthrough  \.Replace\s*\(
+  message
+    en: User-controlled input is used in a file path without validation — Path Traversal risk.
+    fr: Une donnée contrôlée par l'utilisateur est utilisée dans un chemin de fichier sans validation — risque de Path Traversal.
+  end
+  risk
+    en: An attacker can manipulate the file path to access arbitrary files outside the intended directory, potentially exposing sensitive configuration files, source code, or system files.
+    fr: Un attaquant peut manipuler le chemin de fichier pour accéder à des fichiers arbitraires en dehors du répertoire prévu, exposant potentiellement des fichiers de configuration sensibles, du code source ou des fichiers système.
+    es: Un atacante puede manipular la ruta del archivo para acceder a archivos arbitrarios fuera del directorio previsto, exponiendo archivos de configuración sensibles, código fuente o archivos del sistema.
+    de: Ein Angreifer kann den Dateipfad manipulieren, um auf beliebige Dateien außerhalb des vorgesehenen Verzeichnisses zuzugreifen und dabei sensible Konfigurationsdateien, Quellcode oder Systemdateien preiszugeben.
+  end
+  solution
+    en: Use Path.GetFullPath() to resolve the path and verify it starts with the expected base directory before performing any file operation.
+    fr: Utilisez Path.GetFullPath() pour résoudre le chemin et vérifiez qu'il commence par le répertoire de base attendu avant toute opération sur le fichier.
+    es: Use Path.GetFullPath() para resolver la ruta y verifique que comienza con el directorio base esperado antes de realizar cualquier operación de archivo.
+    de: Verwenden Sie Path.GetFullPath(), um den Pfad aufzulösen und zu prüfen, ob er mit dem erwarteten Basisverzeichnis beginnt, bevor Sie Dateioperationen durchführen.
+  end
+  metadata
+    cwe    CWE-22
+    owasp  A01:2021
+  end
+  benefit
+    en: Reduces attack surface and strengthens application security.
+    fr: Réduit la surface d'attaque et renforce la sécurité de l'application.
+    es: Reduce la superficie de ataque y refuerza la seguridad de la aplicación.
+    de: Reduziert die Angriffsfläche und stärkt die Anwendungssicherheit.
+  end
+  fix_before
+    File.ReadAllText(Request.Query["file"]);
+  end
+  fix_after
+    var safe = Path.GetFullPath(Path.Combine(baseDir, Request.Query["file"]));
+    if (!safe.StartsWith(baseDir)) throw new Exception();
+  end
+  requires
+    demo_fallback  true
+  end
+end

@@ -1,0 +1,53 @@
+# StaticCodeAudit — GitHub Actions workflow
+# Copier ce fichier dans .github/workflows/sca-audit.yml de votre projet
+#
+# Prérequis :
+#   - Placer le binaire SCA dans un emplacement accessible (artefact interne, S3, etc.)
+#   - Adapter SCA_BINARY_URL ci-dessous
+#   - La licence (license.json) doit être à côté du binaire
+
+name: SCA Security Audit
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  # Adapter cette URL au binaire SCA de votre organisation
+  SCA_BINARY_URL: https://internal.example.com/tools/sca/staticcodeaudit-linux-x64
+  SCA_LANG: en
+
+jobs:
+  audit:
+    name: Static Code Audit
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write  # Pour upload SARIF dans Security tab
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download SCA binary
+        run: |
+          curl -fsSL "$SCA_BINARY_URL" -o staticcodeaudit
+          chmod +x staticcodeaudit
+
+      - name: Run audit
+        run: ./staticcodeaudit . --sarif --fail-on-high --lang=$SCA_LANG
+
+      - name: Upload SARIF to GitHub Security
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: docs/audit-reports/
+
+      - name: Upload HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sca-report
+          path: docs/audit-reports/*.html
+          retention-days: 30

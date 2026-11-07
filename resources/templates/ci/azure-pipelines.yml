@@ -1,0 +1,40 @@
+# StaticCodeAudit — Azure DevOps pipeline
+# Copier ce fichier dans azure-pipelines.yml de votre projet
+#
+# Prérequis :
+#   - Placer le binaire SCA dans un emplacement accessible
+#   - Adapter SCA_BINARY_URL ci-dessous
+
+trigger:
+  branches:
+    include:
+      - main
+      - develop
+
+pr:
+  branches:
+    include:
+      - main
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  SCA_BINARY_URL: https://internal.example.com/tools/sca/staticcodeaudit-linux-x64
+  SCA_LANG: en
+
+steps:
+  - script: |
+      curl -fsSL "$(SCA_BINARY_URL)" -o staticcodeaudit
+      chmod +x staticcodeaudit
+    displayName: 'Download SCA binary'
+
+  - script: ./staticcodeaudit . --sarif --fail-on-high --lang=$(SCA_LANG)
+    displayName: 'Run SCA audit'
+
+  - task: PublishBuildArtifacts@1
+    condition: always()
+    inputs:
+      pathToPublish: 'docs/audit-reports'
+      artifactName: 'sca-report'
+    displayName: 'Publish SCA report'

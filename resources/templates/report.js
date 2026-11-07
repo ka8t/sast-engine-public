@@ -1,0 +1,342 @@
+/**
+ * Audit Report - JavaScript
+ * Navigation, accordéons et interactions
+ */
+
+// ========== ACCORDÉONS ==========
+
+function toggleSection(id) {
+    const section = document.getElementById(id);
+    section.classList.toggle('open');
+}
+
+function toggleSubGroup(id) {
+    const group = document.getElementById(id);
+    group.classList.toggle('open');
+}
+
+function togglePrintMode() {
+    document.body.classList.toggle('print-mode');
+    var btn = document.querySelector('.print-btn');
+    var isPrint = document.body.classList.contains('print-mode');
+    btn.textContent = isPrint ? 'Mode normal' : 'Version imprimable';
+
+    // Convertir les canvas Chart.js en images pour l'impression
+    document.querySelectorAll('canvas').forEach(function(canvas) {
+        var existing = canvas.parentNode.querySelector('.print-chart-img');
+        if (isPrint) {
+            if (!existing) {
+                try {
+                    var img = document.createElement('img');
+                    img.src = canvas.toDataURL('image/png');
+                    img.className = 'print-chart-img';
+                    img.style.maxWidth = '100%';
+                    img.style.maxHeight = '180px';
+                    canvas.parentNode.appendChild(img);
+                } catch(e) {}
+            }
+            canvas.style.display = 'none';
+            if (existing) existing.style.display = 'block';
+        } else {
+            canvas.style.display = '';
+            if (existing) existing.style.display = 'none';
+        }
+    });
+}
+
+// ========== NAVIGATION GRAPHIQUES → DÉTAILS ==========
+
+function scrollToSection(id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    // Ouvrir si c'est un accordion fermé (section severity)
+    const sectionEl = el.closest('.section') || el;
+    if (sectionEl.classList.contains('section') && !sectionEl.classList.contains('open')) {
+        sectionEl.classList.add('open');
+    }
+    // Ouvrir tout <details> ancêtre fermé (ex : paramètres d'audit dans Technical Details)
+    let details = el.closest('details');
+    while (details) {
+        if (!details.open) details.open = true;
+        details = details.parentElement && details.parentElement.closest('details');
+    }
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function highlightCategory(catKey) {
+    scrollToSection('section-findings');
+    setTimeout(function() {
+        // Ouvrir toutes les severity sections
+        document.querySelectorAll('.section').forEach(function(s) {
+            s.classList.add('open');
+        });
+        // Ouvrir les sub-groups (Business/Deps)
+        document.querySelectorAll('.sub-group').forEach(function(sg) {
+            sg.classList.add('open');
+        });
+        // Retirer les anciens highlights
+        document.querySelectorAll('.highlight-flash').forEach(function(el) {
+            el.classList.remove('highlight-flash');
+        });
+        // Highlighter les category-groups correspondants
+        var first = true;
+        document.querySelectorAll('.category-group[data-category="' + catKey + '"]').forEach(function(cg) {
+            cg.classList.add('open', 'highlight-flash');
+            if (first) {
+                cg.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                first = false;
+            }
+        });
+        // Retirer le flash après 3s
+        setTimeout(function() {
+            document.querySelectorAll('.highlight-flash').forEach(function(el) {
+                el.classList.remove('highlight-flash');
+            });
+        }, 3000);
+    }, 500);
+}
+
+// ========== NAVIGATION ==========
+
+const navSections = [];
+let currentSectionIndex = 0;
+
+function initNavigation() {
+    // Collect all navigable sections
+    document.querySelectorAll('[data-nav-section]').forEach(el => {
+        navSections.push({ id: el.id, label: el.dataset.navSection });
+    });
+
+    // Scroll spy
+    window.addEventListener('scroll', updateActiveSection);
+    updateActiveSection();
+
+    // Back to top visibility
+    const backToTop = document.querySelector('.back-to-top');
+    if (backToTop) {
+        window.addEventListener('scroll', () => {
+            backToTop.classList.toggle('visible', window.scrollY > 300);
+        });
+    }
+
+    // Update nav buttons state
+    updateNavButtons();
+}
+
+function getAbsoluteTop(el) {
+    let top = 0;
+    let current = el;
+    while (current) {
+        top += current.offsetTop;
+        current = current.offsetParent;
+    }
+    return top;
+}
+
+function updateActiveSection() {
+    const scrollPos = window.scrollY + 120;
+    let activeIdx = 0;
+
+    navSections.forEach((section, idx) => {
+        const el = document.getElementById(section.id);
+        if (el && getAbsoluteTop(el) <= scrollPos) activeIdx = idx;
+    });
+
+    currentSectionIndex = activeIdx;
+
+    const activeSectionId = navSections[activeIdx] ? navSections[activeIdx].id : null;
+    document.querySelectorAll('.sidebar-toc a').forEach(a => {
+        a.classList.toggle('active', a.getAttribute('href') === '#' + activeSectionId);
+    });
+
+    updateNavButtons();
+}
+
+function updateNavButtons() {
+    const prevBtn = document.getElementById('navPrev');
+    const nextBtn = document.getElementById('navNext');
+    if (prevBtn) prevBtn.disabled = currentSectionIndex === 0;
+    if (nextBtn) nextBtn.disabled = currentSectionIndex >= navSections.length - 1;
+}
+
+function navigateToSection(idx) {
+    if (idx < 0 || idx >= navSections.length) return;
+    const section = navSections[idx];
+    const el = document.getElementById(section.id);
+    if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        currentSectionIndex = idx;
+        updateNavButtons();
+    }
+}
+
+function navPrev() { navigateToSection(currentSectionIndex - 1); }
+function navNext() { navigateToSection(currentSectionIndex + 1); }
+function scrollToTop() { window.scrollTo({ top: 0, behavior: 'smooth' }); }
+
+// Keyboard navigation
+document.addEventListener('keydown', function(e) {
+    // Ignore if in input/textarea
+    if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
+
+    switch(e.key) {
+        case 'j': navNext(); break;
+        case 'k': navPrev(); break;
+        case 'Home':
+            if (e.ctrlKey) { e.preventDefault(); scrollToTop(); }
+            break;
+        case 'End':
+            if (e.ctrlKey) { e.preventDefault(); navigateToSection(navSections.length - 1); }
+            break;
+    }
+});
+
+// ========== SIDEBAR RESIZE ==========
+
+function initSidebarResize() {
+    var handle = document.getElementById('sidebarResizeHandle');
+    if (!handle) return;
+    var minW = 180, maxW = 500;
+    var saved = localStorage.getItem('sidebarWidth');
+    if (saved) {
+        var w = parseInt(saved, 10);
+        if (w >= minW && w <= maxW) {
+            document.documentElement.style.setProperty('--sidebar-width', w + 'px');
+        }
+    }
+    var dragging = false;
+    handle.addEventListener('mousedown', function(e) {
+        e.preventDefault();
+        dragging = true;
+        handle.classList.add('dragging');
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+    });
+    document.addEventListener('mousemove', function(e) {
+        if (!dragging) return;
+        var w = Math.min(maxW, Math.max(minW, e.clientX));
+        document.documentElement.style.setProperty('--sidebar-width', w + 'px');
+    });
+    document.addEventListener('mouseup', function() {
+        if (!dragging) return;
+        dragging = false;
+        handle.classList.remove('dragging');
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        var w = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--sidebar-width'));
+        localStorage.setItem('sidebarWidth', w);
+    });
+}
+
+// ========== INITIALIZATION ==========
+
+function applyScrollMargins(stuck) {
+    const toc = document.querySelector('.toc-block');
+    const h = (stuck && toc) ? toc.offsetHeight + 8 : 0;
+    document.querySelectorAll('[id^="section-"], [id^="level-"], #nav-header').forEach(el => {
+        el.style.scrollMarginTop = h + 'px';
+    });
+}
+
+function toggleToc() {
+    const toc = document.querySelector('.toc-block');
+    if (!toc) return;
+    const btn = toc.querySelector('.toc-toggle');
+    const open = toc.classList.toggle('toc-open');
+    if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    setTimeout(() => applyScrollMargins(toc.classList.contains('is-stuck')), 260);
+}
+
+function closeToc() {
+    const toc = document.querySelector('.toc-block');
+    if (!toc || !toc.classList.contains('toc-open')) return;
+    toc.classList.remove('toc-open');
+    const btn = toc.querySelector('.toc-toggle');
+    if (btn) btn.setAttribute('aria-expanded', 'false');
+    setTimeout(() => applyScrollMargins(toc.classList.contains('is-stuck')), 260);
+}
+
+function initStickyToc() {
+    const toc = document.querySelector('.toc-block');
+    if (!toc) return;
+
+    // Sentinel 1px placé juste avant le TOC : quand il sort du viewport par le haut, le TOC est collé
+    const sentinel = document.createElement('div');
+    sentinel.setAttribute('aria-hidden', 'true');
+    sentinel.style.cssText = 'height:1px;margin-bottom:-1px;pointer-events:none;';
+    toc.parentNode.insertBefore(sentinel, toc);
+
+    const obs = new IntersectionObserver(([entry]) => {
+        const stuck = entry.boundingClientRect.top < 0;
+        toc.classList.toggle('is-stuck', stuck);
+        applyScrollMargins(stuck);
+    }, { threshold: [0] });
+    obs.observe(sentinel);
+
+    window.addEventListener('resize', () => applyScrollMargins(toc.classList.contains('is-stuck')), { passive: true });
+    applyScrollMargins(false);
+
+    // Desktop (souris) : hover pour ouvrir/fermer
+    const isTouch = window.matchMedia('(hover: none)').matches;
+    if (!isTouch) {
+        let closeTimer = null;
+        toc.addEventListener('mouseenter', function() {
+            clearTimeout(closeTimer);
+            if (!toc.classList.contains('toc-open')) {
+                toc.classList.add('toc-open');
+                const btn = toc.querySelector('.toc-toggle');
+                if (btn) btn.setAttribute('aria-expanded', 'true');
+                setTimeout(() => applyScrollMargins(toc.classList.contains('is-stuck')), 260);
+            }
+        });
+        toc.addEventListener('mouseleave', function() {
+            closeTimer = setTimeout(closeToc, 200);
+        });
+    }
+
+    // Clic sur un item du TOC → fermeture (desktop et mobile)
+    toc.querySelectorAll('.toc-list a').forEach(function(a) {
+        a.addEventListener('click', function() {
+            // Délai court : laisser le scroll démarrer avant de refermer
+            setTimeout(closeToc, 80);
+        });
+    });
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    // Ouvrir automatiquement le bloc Detected Issues s'il contient des findings
+    const findingsSection = document.getElementById('section-findings');
+    if (findingsSection && findingsSection.querySelector('.finding')) {
+        findingsSection.classList.add('open');
+    }
+
+    // Ouvrir automatiquement la section HIGH si elle a des éléments
+    const highSection = document.getElementById('section-HIGH');
+    if (highSection && highSection.querySelector('.finding')) {
+        highSection.classList.add('open');
+    }
+
+    // Initialiser les graphiques (fonction définie dynamiquement)
+    if (typeof initCharts === 'function') {
+        initCharts();
+    }
+
+    // Initialiser la navigation
+    initNavigation();
+
+    // Initialiser le redimensionnement de la sidebar
+    initSidebarResize();
+
+    // TOC sticky : classe is-stuck + scroll-margin-top dynamique
+    initStickyToc();
+
+    // Ancres "retour au sommaire" : l'élément #sommaire est sticky donc toujours visible,
+    // le navigateur ne scrolle pas — on force le retour en haut de page
+    document.querySelectorAll('.back-to-toc').forEach(function(a) {
+        a.addEventListener('click', function(e) {
+            e.preventDefault();
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        });
+    });
+
+});

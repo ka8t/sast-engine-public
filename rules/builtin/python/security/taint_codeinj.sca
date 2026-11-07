@@ -1,0 +1,115 @@
+rule taint_codeinj
+  language  python
+  category  security
+  severity  HIGH
+  confidence 90
+  source  request\.(GET|POST|args|form|json|data)  kind=http
+  source  request\.(query_params|path_params|cookies|headers)  kind=http
+  source  flask\.request\.  kind=http
+  source  Body\s*\(  kind=http
+  source  Query\s*\(  kind=http
+  source  input\s*\(  kind=stdin
+  source  sys\.argv\[  kind=cli
+  source  os\.environ  kind=env
+  source  request\.query_string  kind=http
+  source  request\.cookies  kind=http
+  source  request\.url  kind=http
+  source  request\.path  kind=http
+  source  request\.remote_addr  kind=http
+  source  request\.user_agent  kind=http
+  source  request\.referrer  kind=http
+  source  request\.content_type  kind=http
+  source  request\.get_json\s*\(  kind=http
+  source  request\.values  kind=http
+  source  request\.cookies\.get\s*\(  kind=http
+  source  request\.cookies\[  kind=http
+  source  request\.form\.getlist\s*\(  kind=http
+  source  request\.args\.getlist\s*\(  kind=http
+  source  wrapped\.get_form_parameter\s*\(  kind=http
+  source  wrapped\.get_query_parameter\s*\(  kind=http
+  source  wrapped\.get_cookie\s*\(  kind=http
+  source  wrapped\.get_header\s*\(  kind=http
+  source  helpers\.utils\.get_parameter\s*\(  kind=http
+  source  helpers\.utils\.get_parameter_list\s*\(  kind=http
+  sink    \b(?:eval|exec|execfile|compile|__import__)\s*\(
+  sanitizer  ast\.literal_eval
+  sanitizer  \bint\s*\(
+  sanitizer  \bfloat\s*\(
+  sanitizer  \bisinstance\s*\(
+  sanitizer  json\.loads
+  sanitizer  \bstr\.isdigit
+  sanitizer  \.isalnum\s*\(
+  sanitizer  \.isdigit\s*\(
+  sanitizer  \.isalpha\s*\(
+  sanitizer  \.startswith\s*\(
+  sanitizer  \.endswith\s*\(
+  sanitizer  re\.match
+  sanitizer  re\.fullmatch
+  passthrough  str\s*\(
+  passthrough  \.strip\s*\(
+  passthrough  \.lstrip\s*\(
+  passthrough  \.rstrip\s*\(
+  passthrough  \.lower\s*\(
+  passthrough  \.upper\s*\(
+  passthrough  \.encode\s*\(
+  passthrough  \.decode\s*\(
+  passthrough  urllib\.parse\.unquote
+  passthrough  urllib\.parse\.quote
+  passthrough  json\.loads
+  passthrough  json\.dumps
+  passthrough  base64\.b64decode
+  passthrough  \.replace\s*\(
+  passthrough  \.format\s*\(
+  passthrough  urllib\.parse\.unquote_plus
+  passthrough  base64\.b64encode
+  passthrough  base64\.urlsafe_b64decode
+  passthrough  base64\.urlsafe_b64encode
+  passthrough  configparser.*\.get\s*\(
+  passthrough  \.encode\s*\(.*utf
+  passthrough  \.decode\s*\(.*utf
+  passthrough  str\.maketrans
+  passthrough  \.translate\s*\(
+  passthrough  \.split\s*\(
+  passthrough  \.join\s*\(
+  passthrough  \[\d+:-?\d*\]
+  passthrough  request_wrapper\s*\(
+  message
+    en: Code Injection — tainted data flows into dynamic code execution without validation
+    fr: Injection de code — données non fiables atteignent une exécution dynamique sans validation
+  end
+  risk
+    en: An attacker can execute arbitrary Python code on the server.
+    fr: Un attaquant peut exécuter du code Python arbitraire sur le serveur.
+    es: Un atacante puede ejecutar codigo Python arbitrario en el servidor.
+    de: Ein Angreifer kann beliebigen Python-Code auf dem Server ausfuehren.
+  end
+  solution
+    en: Replace dynamic execution with ast.literal_eval() for data parsing, or use a whitelist of allowed operations.
+    fr: Remplacez l'exécution dynamique par ast.literal_eval() pour le parsing de données, ou utilisez une liste blanche d'opérations autorisées.
+    es: Reemplazar la ejecucion dinamica por ast.literal_eval() para el analisis de datos, o usar una lista blanca de operaciones permitidas.
+    de: Dynamische Ausfuehrung durch ast.literal_eval() fuer Daten-Parsing ersetzen, oder eine Allowlist erlaubter Operationen verwenden.
+  end
+  metadata
+    cwe    CWE-94
+    owasp  A03:2021
+    iso27001  A.8.28
+  end
+  benefit
+    en: Reduces attack surface and strengthens application security.
+    fr: Reduit la surface d'attaque et renforce la securite de l'application.
+    es: Reduce la superficie de ataque y refuerza la seguridad de la aplicacion.
+    de: Reduziert die Angriffsflaeche und staerkt die Anwendungssicherheit.
+  end
+  fix_before
+    code = request.form["code"]
+    exec(code)
+  end
+  fix_after
+    code = request.form["code"]
+    # Never exec/eval user input
+    result = ast.literal_eval(code)  # only for literals
+  end
+  requires
+    demo_fallback  true
+  end
+end

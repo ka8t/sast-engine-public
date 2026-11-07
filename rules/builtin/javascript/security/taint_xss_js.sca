@@ -1,0 +1,78 @@
+rule taint_xss_js
+  language  javascript
+  category  security
+  severity  HIGH
+  confidence 85
+  source  req\.(params|query|body)\.  kind=http
+  source  req\.body\[  kind=http
+  source  req\.body  kind=http
+  source  document\.location  kind=http
+  source  window\.name  kind=http
+  source  req\.cookies  kind=http
+  source  req\.headers  kind=http
+  source  req\.ip  kind=http
+  source  req\.hostname  kind=http
+  source  req\.url  kind=http
+  source  req\.path  kind=http
+  source  req\.get\s*\(  kind=http
+  sink    \.send\s*\(
+  sink    \.render\s*\(
+  sink    \.write\s*\(
+  sink    \.innerHTML\s*=
+  sink    \.outerHTML\s*=
+  sink    document\.write\s*\(
+  sink    dangerouslySetInnerHTML
+  sanitizer  escapeHtml
+  sanitizer  sanitize
+  sanitizer  DOMPurify
+  sanitizer  encode
+  passthrough  decodeURIComponent
+  passthrough  encodeURIComponent
+  passthrough  JSON\.parse
+  passthrough  JSON\.stringify
+  passthrough  \.trim\s*\(
+  passthrough  \.toLowerCase\s*\(
+  passthrough  \.toUpperCase\s*\(
+  passthrough  \.slice\s*\(
+  passthrough  \.substring\s*\(
+  passthrough  \.replace\s*\(
+  passthrough  \.split\s*\(
+  passthrough  \.join\s*\(
+  passthrough  String\s*\(
+  passthrough  \.toString\s*\(
+  message
+    en: Cross-Site Scripting — tainted data rendered in response without escaping
+    fr: Cross-Site Scripting — données non fiables rendues dans la réponse sans échappement
+  end
+  risk
+    en: An attacker can inject malicious scripts that execute in other users' browsers.
+    fr: Un attaquant peut injecter des scripts malveillants qui s'exécutent dans le navigateur des autres utilisateurs.
+    es: Un atacante puede inyectar scripts maliciosos que se ejecutan en los navegadores de otros usuarios.
+    de: Ein Angreifer kann boesartige Skripte einschleusen, die in den Browsern anderer Benutzer ausgefuehrt werden.
+  end
+  solution
+    en: Escape all user input before rendering in HTML. Use framework auto-escaping or html.escape().
+    fr: Échappez toutes les entrées utilisateur avant le rendu HTML. Utilisez l'auto-échappement du framework.
+    es: Escapar toda la entrada de usuario antes de renderizar en HTML. Usar el auto-escapado del framework o html.escape().
+    de: Alle Benutzereingaben vor dem Rendern in HTML escapen. Framework-Auto-Escaping oder html.escape() verwenden.
+  end
+  metadata
+    cwe    CWE-79
+    owasp  A03:2021
+  end
+  benefit
+    en: Reduces attack surface and strengthens application security.
+    fr: Reduit la surface d'attaque et renforce la securite de l'application.
+    es: Reduce la superficie de ataque y refuerza la seguridad de la aplicacion.
+    de: Reduziert die Angriffsflaeche und staerkt die Anwendungssicherheit.
+  end
+  fix_before
+    element.innerHTML = userInput;
+  end
+  fix_after
+    element.textContent = userInput;
+  end
+  requires
+    demo_fallback  true
+  end
+end

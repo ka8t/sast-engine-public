@@ -1,0 +1,60 @@
+rule gha_cache_poisoning
+  language  yaml
+  severity  HIGH
+  category  cicd
+  match
+    pattern  (?:actions/cache@|cache:\s*true|setup-node@|setup-go@|setup-python@|setup-java@)
+    with     (?:\brelease\b)
+    scope    file
+  end
+  metadata
+    cwe    CWE-345
+  end
+  risk
+    en: Using build caches during a release workflow allows cache poisoning — a compromised cache entry can inject malicious code into a published artifact.
+    fr: Utiliser des caches de build dans un workflow de release permet l'empoisonnement de cache — une entrée de cache compromise peut injecter du code malveillant dans un artefact publié.
+    es: Usar cachés de build durante un workflow de release permite el envenenamiento de caché — una entrada de caché comprometida puede inyectar código malicioso en un artefacto publicado.
+    de: Build-Caches in einem Release-Workflow zu verwenden, ermöglicht Cache-Poisoning — ein kompromittierter Cache-Eintrag kann bösartigen Code in ein veröffentlichtes Artefakt einschleusen.
+  end
+  solution
+    en: Disable caching in release workflows (cache: false) or use isolated environments without shared cache for artifact publication.
+    fr: Désactiver le cache dans les workflows de release (cache: false) ou utiliser des environnements isolés sans cache partagé pour la publication d'artefacts.
+    es: Deshabilitar el caché en los workflows de release (cache: false) o usar entornos aislados sin caché compartida para la publicación de artefactos.
+    de: Caching in Release-Workflows deaktivieren (cache: false) oder isolierte Umgebungen ohne geteilten Cache für die Artefaktpublikation verwenden.
+  end
+  benefit
+    en: Ensures published artifacts are built from source only, preventing supply chain attacks via cache poisoning (OWASP CI-CD-09).
+    fr: Garantit que les artefacts publiés sont construits depuis les sources uniquement, prévenant les attaques supply chain via l'empoisonnement de cache (OWASP CI-CD-09).
+    es: Garantiza que los artefactos publicados se construyen solo desde el código fuente, previniendo ataques de supply chain mediante envenenamiento de caché (OWASP CI-CD-09).
+    de: Stellt sicher, dass veröffentlichte Artefakte nur aus dem Quellcode gebaut werden, und verhindert Supply-Chain-Angriffe durch Cache-Poisoning (OWASP CI-CD-09).
+  end
+  fix_before
+    # Covers: gha_cache_poisoning
+    name: Release
+    on:
+      release:
+        types: [published]
+    permissions:
+      contents: write
+    jobs:
+      publish:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
+            with:
+              persist-credentials: false
+          - uses: actions/setup-go@v5
+            with:
+              cache: true
+          - run: goreleaser release --clean
+  end
+  fix_after
+    - uses: actions/setup-go@v5
+      with:
+        cache: false
+    - uses: goreleaser/goreleaser-action@v5
+  end
+  requires
+    demo_fallback  true
+  end
+end

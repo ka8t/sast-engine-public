@@ -1,0 +1,3 @@
+# Byte-exact fixture: the rule file hash is signed (ticket #107), so no
+# CRLF conversion on Windows checkouts.
+tests/fixtures/python_signed_pack/** -text

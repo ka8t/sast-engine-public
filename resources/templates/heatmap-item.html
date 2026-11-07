@@ -1,0 +1,15 @@
+<div class="heatmap-item">
+    <span class="hm-rank">{{rank}}</span>
+    <div class="hm-body">
+        <div class="hm-header">
+            <div class="hm-path" onclick="navigateToFile('{{filepath}}')" title="{{filepath}}">
+                <span class="hm-dir">{{fdir}}</span><span class="hm-fname">{{fname}}</span>
+            </div>
+            <span class="hm-score" title="{{i18n_severity_score}}">{{count}}</span>
+        </div>
+        <div class="hm-bar-track">
+            <div class="hm-bar-fill" style="width: {{heat_pct}}%"></div>
+        </div>
+        <div class="hm-chips">{{chips}}</div>
+    </div>
+</div>

@@ -1,0 +1,44 @@
+rule dom_clobbering
+  language  html
+  category  security
+  severity  MEDIUM
+  confidence 75
+  match
+    pattern  (name|id)\s*=\s*['"](location|document|window|top|self|parent|frames|opener|content|origin)['"]
+    scope    line
+  end
+  message
+    en: DOM clobbering — HTML element name/id shadows a global JS property
+    fr: DOM clobbering — un nom/id d'élément HTML masque une propriété JS globale
+  end
+  metadata
+    cwe    CWE-79
+  end
+  risk
+    en: Elements named 'location', 'document', etc. override global JavaScript properties, enabling XSS or logic bypass (CWE-79).
+    fr: Les éléments nommés 'location', 'document', etc. écrasent les propriétés JavaScript globales, permettant le XSS ou le contournement de logique (CWE-79).
+    es: Elementos nombrados location, document, etc. sobrescriben propiedades globales de JavaScript, permitiendo XSS o evasion de logica (CWE-79).
+    de: Elemente mit den Namen location, document usw. ueberschreiben globale JavaScript-Eigenschaften und ermoeglichen XSS oder Logik-Umgehung (CWE-79).
+  end
+  solution
+    en: Avoid using JavaScript global property names as HTML element id or name attributes.
+    fr: Éviter d'utiliser les noms de propriétés globales JavaScript comme attributs id ou name des éléments HTML.
+    es: Evitar usar nombres de propiedades globales de JavaScript como atributos id o name de elementos HTML.
+    de: Vermeiden Sie JavaScript-Globalpropertynamen als HTML-Element-id- oder name-Attribute.
+  end
+  benefit
+    en: Reduces attack surface and strengthens application security.
+    fr: Reduit la surface d'attaque et renforce la securite de l'application.
+    es: Reduce la superficie de ataque y refuerza la seguridad de la aplicacion.
+    de: Reduziert die Angriffsflaeche und staerkt die Anwendungssicherheit.
+  end
+  fix_before
+    <form id="document"><input name="cookie" value="hacked"></form>
+  end
+  fix_after
+    <!-- Avoid using DOM API names as element IDs -->
+  end
+  requires
+    demo_fallback  true
+  end
+end

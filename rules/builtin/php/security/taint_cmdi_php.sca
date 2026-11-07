@@ -1,0 +1,71 @@
+rule taint_cmdi_php
+  language  php
+  category  security
+  severity  HIGH
+  confidence 90
+  source  \$_GET\[  kind=http
+  source  \$_POST\[  kind=http
+  source  \$_REQUEST\[  kind=http
+  source  \$argv\[  kind=cli
+  source  \$_SERVER\[  kind=http
+  source  \$_FILES\[  kind=http
+  source  php://input  kind=http
+  source  file_get_contents\s*\(\s*['"]php://input  kind=http
+  sink    \bsystem\s*\(
+  sink    \bpassthru\s*\(
+  sink    shell_exec\s*\(
+  sink    proc_open\s*\(
+  sink    popen\s*\(
+  # Rust-only addition (2026-11-04 resync with the Python rule): `exec()`, absent from the Python rule.
+  sink    \bexec\s*\(
+  sanitizer  escapeshellarg\s*\(
+  sanitizer  escapeshellcmd\s*\(
+  passthrough  urldecode
+  passthrough  rawurldecode
+  passthrough  trim
+  passthrough  ltrim
+  passthrough  rtrim
+  passthrough  strtolower
+  passthrough  strtoupper
+  passthrough  substr
+  passthrough  str_replace
+  passthrough  json_decode
+  passthrough  base64_decode
+  passthrough  htmlspecialchars_decode
+  message
+    en: RCE — tainted data in shell command
+    fr: Exécution de code à distance — données non fiables dans une commande shell
+  end
+  risk
+    en: An attacker can execute arbitrary commands on the server.
+    fr: Un attaquant peut exécuter des commandes arbitraires sur le serveur.
+    es: Un atacante puede ejecutar comandos arbitrarios en el servidor.
+    de: Ein Angreifer kann beliebige Befehle auf dem Server ausfuehren.
+  end
+  solution
+    en: Use escapeshellarg() to sanitize arguments before shell execution.
+    fr: Utilisez escapeshellarg() pour assainir les arguments avant l'exécution shell.
+    es: Usar escapeshellarg() para sanear los argumentos antes de la ejecucion shell.
+    de: escapeshellarg() verwenden, um Argumente vor der Shell-Ausfuehrung zu bereinigen.
+  end
+  metadata
+    cwe    CWE-78
+    owasp  A03:2021
+  end
+  benefit
+    en: Reduces attack surface and strengthens application security.
+    fr: Reduit la surface d'attaque et renforce la securite de l'application.
+    es: Reduce la superficie de ataque y refuerza la seguridad de la aplicacion.
+    de: Reduziert die Angriffsflaeche und staerkt die Anwendungssicherheit.
+  end
+  fix_before
+    $pdo->query("SELECT * FROM t WHERE id=" . $val);
+  end
+  fix_after
+    $stmt = $pdo->prepare("SELECT * FROM t WHERE id=?");
+    $stmt->execute([$val]);
+  end
+  requires
+    demo_fallback  true
+  end
+end

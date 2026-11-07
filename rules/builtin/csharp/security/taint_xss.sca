@@ -1,0 +1,65 @@
+rule taint_xss
+  language  csharp
+  category  security
+  severity  HIGH
+  confidence 85
+  source  Request\.Query\[  kind=http
+  source  Request\.QueryString\[  kind=http
+  source  Request\[  kind=http
+  source  Request\.Form\[  kind=http
+  source  Request\.Headers\[  kind=http
+  source  Request\.Cookies  kind=http
+  source  Request\.Body  kind=http
+  source  Request\.Path  kind=http
+  source  HttpContext\.Request  kind=http
+  sink    Response\.Write\s*\(
+  sink    Html\.Raw\s*\(
+  sink    Content\s*\(
+  sink    \.Write\s*\(
+  sanitizer  HttpUtility\.HtmlEncode
+  sanitizer  WebUtility\.HtmlEncode
+  sanitizer  AntiXssEncoder\.HtmlEncode
+  passthrough  WebUtility\.UrlDecode
+  passthrough  WebUtility\.HtmlDecode
+  passthrough  Convert\.ToString
+  passthrough  \.Trim\s*\(
+  passthrough  \.ToLower\s*\(
+  passthrough  \.ToUpper\s*\(
+  passthrough  \.Substring\s*\(
+  passthrough  \.Replace\s*\(
+  message
+    en: User-controlled input is written to HTTP response without encoding — Cross-Site Scripting (XSS) risk.
+    fr: Une donnée contrôlée par l'utilisateur est écrite dans la réponse HTTP sans encodage — risque de Cross-Site Scripting (XSS).
+  end
+  risk
+    en: An attacker can inject malicious JavaScript that executes in the victim's browser, leading to session hijacking, credential theft, or defacement.
+    fr: Un attaquant peut injecter du JavaScript malveillant exécuté dans le navigateur de la victime, entraînant un vol de session, un vol d'identifiants ou une dégradation de page.
+    es: Un atacante puede inyectar JavaScript malicioso que se ejecuta en el navegador de la víctima, provocando robo de sesión, robo de credenciales o desfiguración.
+    de: Ein Angreifer kann schädliches JavaScript einschleusen, das im Browser des Opfers ausgeführt wird, und so Session-Hijacking, Diebstahl von Anmeldedaten oder Defacement verursachen.
+  end
+  solution
+    en: Encode all user-supplied data before writing it to an HTML response using HttpUtility.HtmlEncode() or WebUtility.HtmlEncode().
+    fr: Encodez toutes les données fournies par l'utilisateur avant de les écrire dans une réponse HTML via HttpUtility.HtmlEncode() ou WebUtility.HtmlEncode().
+    es: Codifique todos los datos suministrados por el usuario antes de escribirlos en una respuesta HTML usando HttpUtility.HtmlEncode() o WebUtility.HtmlEncode().
+    de: Kodieren Sie alle benutzerseitig gelieferten Daten vor dem Schreiben in eine HTML-Antwort mit HttpUtility.HtmlEncode() oder WebUtility.HtmlEncode().
+  end
+  metadata
+    cwe    CWE-79
+    owasp  A03:2021
+  end
+  benefit
+    en: Reduces attack surface and strengthens application security.
+    fr: Réduit la surface d'attaque et renforce la sécurité de l'application.
+    es: Reduce la superficie de ataque y refuerza la seguridad de la aplicación.
+    de: Reduziert die Angriffsfläche und stärkt die Anwendungssicherheit.
+  end
+  fix_before
+    Response.Write(Request.Query["name"]);
+  end
+  fix_after
+    Response.Write(HttpUtility.HtmlEncode(Request.Query["name"]));
+  end
+  requires
+    demo_fallback  true
+  end
+end

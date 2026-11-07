@@ -1,0 +1,35 @@
+<div class="fixtures-section">
+    <h2 class="section-title">🔬 {{i18n_fixtures_validation}} <a href="#sommaire" class="back-to-toc">↑ {{i18n_toc}}</a></h2>
+    <p class="fixtures-explanation">{{i18n_fixtures_explanation}}</p>
+    <div class="fixtures-summary {{validity_class}}">
+        <span class="fixtures-icon">{{validity_icon}}</span>
+        <div>
+            <strong>{{validity_text}}</strong>
+            <div class="fixtures-subtitle">{{vulnerable_detected}}/{{vulnerable_total}} {{i18n_vulnerable_detected}}, {{clean_passed}}/{{clean_total}} {{i18n_clean_validated}}</div>
+        </div>
+    </div>
+    <div class="fixtures-grid">
+        <div class="fixture-stat">
+            <div class="fixture-stat-value true-positive">{{vulnerable_detected}}</div>
+            <div class="fixture-stat-label">{{i18n_true_positives}}</div>
+            <div class="fixture-stat-desc">{{i18n_true_positives_desc}}</div>
+        </div>
+        <div class="fixture-stat">
+            <div class="fixture-stat-value true-negative">{{clean_passed}}</div>
+            <div class="fixture-stat-label">{{i18n_true_negatives}}</div>
+            <div class="fixture-stat-desc">{{i18n_true_negatives_desc}}</div>
+        </div>
+        <div class="fixture-stat">
+            <div class="fixture-stat-value false-negative">{{vulnerable_missed}}</div>
+            <div class="fixture-stat-label">{{i18n_false_negatives}}</div>
+            <div class="fixture-stat-desc">{{i18n_false_negatives_desc}}</div>
+        </div>
+        <div class="fixture-stat">
+            <div class="fixture-stat-value false-positive">{{clean_false_positive}}</div>
+            <div class="fixture-stat-label">{{i18n_false_positives}}</div>
+            <div class="fixture-stat-desc">{{i18n_false_positives_desc}}</div>
+        </div>
+    </div>
+    {{details}}
+    {{fixtures_list}}
+</div>

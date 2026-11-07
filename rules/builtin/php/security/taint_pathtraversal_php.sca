@@ -1,0 +1,68 @@
+rule taint_pathtraversal_php
+  language  php
+  category  security
+  severity  HIGH
+  confidence 85
+  source  \$_GET\[  kind=http
+  source  \$_POST\[  kind=http
+  source  \$_REQUEST\[  kind=http
+  source  \$_COOKIE\[  kind=http
+  source  \$_SERVER\[  kind=http
+  source  php://input  kind=http
+  sink    file_get_contents\s*\(
+  sink    file_put_contents\s*\(
+  sink    fopen\s*\(
+  sink    include\s*\(
+  sink    include_once\s*\(
+  sink    require\s*\(
+  sink    require_once\s*\(
+  sink    readfile\s*\(
+  sanitizer  realpath\s*\(
+  sanitizer  basename\s*\(
+  sanitizer  pathinfo\s*\(
+  passthrough  urldecode
+  passthrough  rawurldecode
+  passthrough  trim
+  passthrough  ltrim
+  passthrough  rtrim
+  passthrough  strtolower
+  passthrough  strtoupper
+  passthrough  substr
+  passthrough  str_replace
+  message
+    en: User-controlled input is used in a file path without validation — Path Traversal risk.
+    fr: Une donnée contrôlée par l'utilisateur est utilisée dans un chemin de fichier sans validation — risque de Path Traversal.
+  end
+  risk
+    en: An attacker can manipulate the file path using sequences like ../ to access arbitrary files outside the intended directory, exposing sensitive data or allowing code inclusion.
+    fr: Un attaquant peut manipuler le chemin de fichier avec des séquences comme ../ pour accéder à des fichiers arbitraires en dehors du répertoire prévu, exposant des données sensibles ou permettant l'inclusion de code.
+    es: Un atacante puede manipular la ruta del archivo usando secuencias como ../ para acceder a archivos arbitrarios fuera del directorio previsto, exponiendo datos sensibles o permitiendo la inclusión de código.
+    de: Ein Angreifer kann den Dateipfad mit Sequenzen wie ../ manipulieren, um auf beliebige Dateien außerhalb des vorgesehenen Verzeichnisses zuzugreifen und sensible Daten preiszugeben oder Code-Inklusion zu ermöglichen.
+  end
+  solution
+    en: Use basename() to extract only the filename, or realpath() to resolve the absolute path and verify it starts with the expected base directory.
+    fr: Utilisez basename() pour n'extraire que le nom de fichier, ou realpath() pour résoudre le chemin absolu et vérifier qu'il commence par le répertoire de base attendu.
+    es: Use basename() para extraer solo el nombre del archivo, o realpath() para resolver la ruta absoluta y verificar que comienza con el directorio base esperado.
+    de: Verwenden Sie basename(), um nur den Dateinamen zu extrahieren, oder realpath(), um den absoluten Pfad aufzulösen und zu prüfen, ob er mit dem erwarteten Basisverzeichnis beginnt.
+  end
+  metadata
+    cwe    CWE-22
+    owasp  A01:2021
+  end
+  benefit
+    en: Reduces attack surface and strengthens application security.
+    fr: Réduit la surface d'attaque et renforce la sécurité de l'application.
+    es: Reduce la superficie de ataque y refuerza la seguridad de la aplicación.
+    de: Reduziert die Angriffsfläche und stärkt die Anwendungssicherheit.
+  end
+  fix_before
+    file_get_contents($_GET['file']);
+  end
+  fix_after
+    $file = basename($_GET['file']);
+    file_get_contents('/safe/path/' . $file);
+  end
+  requires
+    demo_fallback  true
+  end
+end

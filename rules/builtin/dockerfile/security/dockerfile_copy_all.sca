@@ -1,0 +1,41 @@
+rule dockerfile_copy_all
+  language  dockerfile
+  category  security
+  severity  MEDIUM
+  match
+    pattern  ^\s*COPY\s+\.\s+\.
+    scope    line
+  end
+  metadata
+    cwe    CWE-732
+  end
+  risk
+    en: COPY . . copies the entire build context including potential secrets (.env, credentials, SSH keys).
+    fr: COPY . . copie tout le contexte de build, y compris les secrets potentiels (.env, credentials, clés SSH).
+    es: COPY . . copia todo el contexto de build, incluyendo secretos potenciales (.env, credenciales, claves SSH).
+    de: COPY . . kopiert den gesamten Build-Kontext einschließlich potenzieller Geheimnisse (.env, Credentials, SSH-Schlüssel).
+  end
+  solution
+    en: Use a .dockerignore file and copy only required files/directories explicitly.
+    fr: Utiliser un fichier .dockerignore et copier uniquement les fichiers/dossiers nécessaires.
+    es: Usar un archivo .dockerignore y copiar solo los archivos/directorios necesarios.
+    de: Eine .dockerignore-Datei verwenden und nur benötigte Dateien/Verzeichnisse explizit kopieren.
+  end
+  benefit
+    en: Reduces attack surface and strengthens application security.
+    fr: Reduit la surface d'attaque et renforce la securite de l'application.
+    es: Reduce la superficie de ataque y refuerza la seguridad de la aplicacion.
+    de: Reduziert die Angriffsflaeche und staerkt die Anwendungssicherheit.
+  end
+  fix_before
+    COPY . .
+  end
+  fix_after
+    COPY package*.json ./
+    RUN npm install
+    COPY src/ ./src/
+  end
+  requires
+    demo_fallback  true
+  end
+end

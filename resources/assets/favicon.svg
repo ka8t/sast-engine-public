@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <!-- Dégradé pour le fond -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1e3a5f"/>
+      <stop offset="100%" style="stop-color:#2c5282"/>
+    </linearGradient>
+    <!-- Lueur pour les nœuds -->
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="1.5" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Fond arrondi -->
+  <rect x="2" y="2" width="60" height="60" rx="14" ry="14" fill="url(#bgGrad)"/>
+
+  <!-- Connexions (lignes) -->
+  <g stroke="rgba(255,255,255,0.4)" stroke-width="2" stroke-linecap="round">
+    <!-- Niveau 1 vers niveau 2 -->
+    <line x1="16" y1="16" x2="32" y2="24"/>
+    <line x1="16" y1="16" x2="16" y2="32"/>
+    <line x1="48" y1="16" x2="32" y2="24"/>
+    <line x1="48" y1="16" x2="48" y2="32"/>
+
+    <!-- Niveau 2 (centre) -->
+    <line x1="16" y1="32" x2="32" y2="24"/>
+    <line x1="16" y1="32" x2="32" y2="40"/>
+    <line x1="48" y1="32" x2="32" y2="24"/>
+    <line x1="48" y1="32" x2="32" y2="40"/>
+    <line x1="32" y1="24" x2="32" y2="40"/>
+
+    <!-- Niveau 2 vers niveau 3 -->
+    <line x1="16" y1="32" x2="16" y2="48"/>
+    <line x1="48" y1="32" x2="48" y2="48"/>
+    <line x1="32" y1="40" x2="16" y2="48"/>
+    <line x1="32" y1="40" x2="48" y2="48"/>
+    <line x1="32" y1="40" x2="32" y2="52"/>
+
+    <!-- Connexions bas -->
+    <line x1="16" y1="48" x2="32" y2="52"/>
+    <line x1="48" y1="48" x2="32" y2="52"/>
+  </g>
+
+  <!-- Nœuds (cercles) -->
+  <g fill="#ffffff" filter="url(#glow)">
+    <!-- Niveau supérieur -->
+    <circle cx="16" cy="16" r="5"/>
+    <circle cx="48" cy="16" r="5"/>
+
+    <!-- Niveau milieu-haut -->
+    <circle cx="32" cy="24" r="6"/>
+
+    <!-- Niveau milieu -->
+    <circle cx="16" cy="32" r="4"/>
+    <circle cx="48" cy="32" r="4"/>
+
+    <!-- Niveau milieu-bas -->
+    <circle cx="32" cy="40" r="6"/>
+
+    <!-- Niveau inférieur -->
+    <circle cx="16" cy="48" r="4"/>
+    <circle cx="48" cy="48" r="4"/>
+
+    <!-- Nœud central bas (output) -->
+    <circle cx="32" cy="52" r="5"/>
+  </g>
+</svg>

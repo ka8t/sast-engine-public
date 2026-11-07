@@ -1,0 +1,42 @@
+rule dockerfile_unpinned_base
+  language  dockerfile
+  category  security
+  severity  MEDIUM
+  match
+    pattern  FROM\s+\w+\s*$
+    scope    line
+  end
+  metadata
+    cwe    CWE-1357
+  end
+  risk
+    en: Base image without version tag (FROM node) pulls latest, causing non-reproducible builds and potential supply chain issues.
+    fr: Image de base sans tag de version (FROM node) récupère la dernière version, causant des builds non reproductibles et des risques supply chain.
+    es: Imagen base sin tag de versión (FROM node) descarga la última, causando builds no reproducibles y riesgos de cadena de suministro.
+    de: Basis-Image ohne Versions-Tag (FROM node) lädt die neueste Version, was nicht-reproduzierbare Builds und Supply-Chain-Risiken verursacht.
+  end
+  solution
+    en: Pin base image to a specific version or digest (e.g., FROM node:20-alpine or FROM node@sha256:...).
+    fr: Fixer l'image de base à une version spécifique ou un digest (ex: FROM node:20-alpine ou FROM node@sha256:...).
+    es: Fijar la imagen base a una versión específica o digest (ej: FROM node:20-alpine o FROM node@sha256:...).
+    de: Basis-Image auf eine bestimmte Version oder Digest fixieren (z.B. FROM node:20-alpine oder FROM node@sha256:...).
+  end
+  benefit
+    en: Reduces attack surface and strengthens application security.
+    fr: Reduit la surface d'attaque et renforce la securite de l'application.
+    es: Reduce la superficie de ataque y refuerza la seguridad de la aplicacion.
+    de: Reduziert die Angriffsflaeche und staerkt die Anwendungssicherheit.
+  end
+  fix_before
+    FROM python
+    RUN pip install flask
+    COPY src/ ./src/
+    CMD ["python", "src/app.py"]
+  end
+  fix_after
+    FROM node:20.11.0-alpine
+  end
+  requires
+    demo_fallback  true
+  end
+end

@@ -1,0 +1,73 @@
+rule taint_rce
+  language  csharp
+  category  security
+  severity  HIGH
+  confidence 85
+  source  Request\.Query\[  kind=http
+  source  Request\.QueryString\[  kind=http
+  source  Request\[  kind=http
+  source  Request\.Form\[  kind=http
+  source  Request\.Headers\[  kind=http
+  source  Request\.Cookies  kind=http
+  source  Request\.Body  kind=http
+  source  Request\.Path  kind=http
+  source  HttpContext\.Request  kind=http
+  source  \.QueryString\[  kind=http
+  source  \.Params\[  kind=http
+  source  \.Params\.Get\s*\(  kind=http
+  source  \.Form\[  kind=http
+  source  \.Headers\[  kind=http
+  source  \.Cookies\[  kind=http
+  source  \.Cookies\.Get\s*\(  kind=http
+  source  Environment\.GetEnvironmentVariable\s*\(  kind=env
+  source  \.ReadLine\s*\(  kind=network
+  sink    Process\.Start\s*\(
+  sink    ProcessStartInfo\s*\(
+  sanitizer  Regex\.IsMatch
+  sanitizer  int\.Parse\s*\(
+  sanitizer  \.Contains\s*\(
+  sanitizer  Enum\.TryParse\s*\(
+  passthrough  WebUtility\.UrlDecode
+  passthrough  WebUtility\.HtmlDecode
+  passthrough  Convert\.ToString
+  passthrough  \.Trim\s*\(
+  passthrough  \.ToLower\s*\(
+  passthrough  \.ToUpper\s*\(
+  passthrough  \.Substring\s*\(
+  passthrough  \.Replace\s*\(
+  message
+    en: User-controlled input is passed to a system process execution function — Remote Code Execution (RCE) risk.
+    fr: Une donnée contrôlée par l'utilisateur est transmise à une fonction d'exécution de processus système — risque d'exécution de code à distance (RCE).
+  end
+  risk
+    en: An attacker can inject arbitrary operating system commands that execute with the privileges of the application, potentially leading to full system compromise, data exfiltration, or persistence.
+    fr: Un attaquant peut injecter des commandes système arbitraires qui s'exécutent avec les privilèges de l'application, pouvant entraîner une compromission totale du système, une exfiltration de données ou une persistance.
+    es: Un atacante puede inyectar comandos del sistema operativo arbitrarios que se ejecutan con los privilegios de la aplicación, lo que podría llevar a un compromiso total del sistema, exfiltración de datos o persistencia.
+    de: Ein Angreifer kann beliebige Betriebssystembefehle einschleusen, die mit den Rechten der Anwendung ausgeführt werden, was zu einer vollständigen Systemkompromittierung, Datenexfiltration oder Persistenz führen kann.
+  end
+  solution
+    en: Never pass user-supplied input directly to Process.Start(). Validate input strictly against an allowlist before any system command execution, or redesign the feature to avoid shell invocation entirely.
+    fr: Ne transmettez jamais de données utilisateur directement à Process.Start(). Validez l'entrée strictement par rapport à une liste blanche avant toute exécution de commande système, ou repensez la fonctionnalité pour éviter l'invocation du shell.
+    es: Nunca pase datos del usuario directamente a Process.Start(). Valide la entrada estrictamente contra una lista blanca antes de ejecutar cualquier comando del sistema, o rediseñe la funcionalidad para evitar la invocación del shell.
+    de: Übergeben Sie benutzerseitig gelieferte Eingaben niemals direkt an Process.Start(). Validieren Sie die Eingabe strikt gegen eine Zulassungsliste vor jeder Systembefehlsausführung oder gestalten Sie die Funktion so um, dass der Shell-Aufruf vollständig vermieden wird.
+  end
+  metadata
+    cwe    CWE-78
+    owasp  A03:2021
+  end
+  benefit
+    en: Reduces attack surface and strengthens application security.
+    fr: Réduit la surface d'attaque et renforce la sécurité de l'application.
+    es: Reduce la superficie de ataque y refuerza la seguridad de la aplicación.
+    de: Reduziert die Angriffsfläche und stärkt die Anwendungssicherheit.
+  end
+  fix_before
+    Process.Start("cmd.exe", "/c " + Request.Query["cmd"]);
+  end
+  fix_after
+    // Valider l'entrée contre une liste blanche stricte avant d'exécuter une commande système
+  end
+  requires
+    demo_fallback  true
+  end
+end

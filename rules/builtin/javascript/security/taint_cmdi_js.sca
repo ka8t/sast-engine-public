@@ -1,0 +1,83 @@
+rule taint_cmdi_js
+  language  javascript
+  category  security
+  severity  HIGH
+  confidence 90
+  source  req\.(params|query|body)\.  kind=http
+  source  req\.body\[  kind=http
+  source  req\.body  kind=http
+  source  process\.argv\[  kind=cli
+  source  process\.env\.  kind=env
+  source  req\.cookies  kind=http
+  source  req\.headers  kind=http
+  source  req\.ip  kind=http
+  source  req\.hostname  kind=http
+  source  req\.url  kind=http
+  source  req\.path  kind=http
+  source  req\.get\s*\(  kind=http
+  sink    child_process\.execFile\s*\(
+  sink    spawn\s*\(
+  sink    execSync\s*\(
+  sink    spawnSync\s*\(
+  # Rust-only addition (2026-11-04 resync with the Python rule): the Python rule has no `exec(` sink at all. The receiver is
+  # constrained: a bare `exec(` (destructured from child_process) or one
+  # explicitly qualified child_process/cp/childProcess; any other `.exec(`
+  # is excluded by a negative lookbehind, otherwise RegExp.prototype.exec()
+  # matches too — real false positive found on 2026-08-30 on OWASP Juice
+  # Shop (routes/vulnCodeSnippet.ts, cross-function flow into
+  # `new RegExp(...).exec(...)`).
+  sink    \b(?:child_process|cp|childProcess)\.exec\s*\(|(?<!\.)\bexec\s*\(
+  sanitizer  escapeshell
+  sanitizer  sanitize
+  sanitizer  parseInt\s*\(
+  sanitizer  Number\s*\(
+  passthrough  decodeURIComponent
+  passthrough  encodeURIComponent
+  passthrough  JSON\.parse
+  passthrough  JSON\.stringify
+  passthrough  \.trim\s*\(
+  passthrough  \.toLowerCase\s*\(
+  passthrough  \.toUpperCase\s*\(
+  passthrough  \.slice\s*\(
+  passthrough  \.substring\s*\(
+  passthrough  \.replace\s*\(
+  passthrough  \.split\s*\(
+  passthrough  \.join\s*\(
+  passthrough  String\s*\(
+  passthrough  \.toString\s*\(
+  message
+    en: Remote Code Execution — tainted data in shell command
+    fr: Exécution de code à distance — données non fiables dans une commande shell
+  end
+  risk
+    en: An attacker can execute arbitrary commands on the server.
+    fr: Un attaquant peut exécuter des commandes arbitraires sur le serveur.
+    es: Un atacante puede ejecutar comandos arbitrarios en el servidor.
+    de: Ein Angreifer kann beliebige Befehle auf dem Server ausfuehren.
+  end
+  solution
+    en: Use execFile with argument arrays instead of shell execution with string interpolation.
+    fr: Utilisez execFile avec des tableaux d'arguments au lieu d'une exécution shell avec interpolation.
+    es: Usar execFile con arrays de argumentos en lugar de ejecucion shell con interpolacion de cadenas.
+    de: execFile mit Argument-Arrays anstelle von Shell-Ausfuehrung mit String-Interpolation verwenden.
+  end
+  metadata
+    cwe    CWE-78
+    owasp  A03:2021
+  end
+  benefit
+    en: Reduces attack surface and strengthens application security.
+    fr: Reduit la surface d'attaque et renforce la securite de l'application.
+    es: Reduce la superficie de ataque y refuerza la seguridad de la aplicacion.
+    de: Reduziert die Angriffsflaeche und staerkt die Anwendungssicherheit.
+  end
+  fix_before
+    db.query("SELECT * FROM t WHERE id=" + val);
+  end
+  fix_after
+    db.query("SELECT * FROM t WHERE id=$1", [val]);
+  end
+  requires
+    demo_fallback  true
+  end
+end
