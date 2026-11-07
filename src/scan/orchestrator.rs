@@ -291,10 +291,14 @@ pub struct ScanConfig {
     /// Explicit test command; if absent and `with_tests`, tries
     /// auto-detection (`testing::auto_detect_test_command`).
     pub test_command: Option<String>,
-    /// Detects unpinned dependencies (opt-in, does only static
-    /// detection — no CVE matching, cf.
-    /// `dependencies.rs`).
+    /// Detects unpinned dependencies and, when `advisories_dir` holds a
+    /// database, dependencies with a published vulnerability (opt-in,
+    /// offline — cf. `dependencies.rs`, `advisories.rs`).
     pub with_deps: bool,
+    /// Offline advisory database written by `tools/sast-advisories`
+    /// (ADR-0035), read during the dependencies phase. `None` or a
+    /// missing directory: no vulnerability matching.
+    pub advisories_dir: Option<PathBuf>,
     /// PostgreSQL schema audit (opt-in — network connection to the
     /// audited project's database, cf. `database::live`).
     pub database: Option<crate::project::database::live::DbConfig>,
@@ -409,6 +413,7 @@ impl Default for ScanConfig {
             with_tests: false,
             test_command: None,
             with_deps: false,
+            advisories_dir: None,
             database: None,
             datas_dir: None,
             brand_prefix: "SCA".to_string(),
@@ -485,6 +490,120 @@ pub struct DependencyStats {
     pub total_scanned: usize,
     pub unpinned: usize,
     pub ok: usize,
+    /// Dependencies with at least one published vulnerability
+    /// (`vulnerable_dependency` findings, ADR-0035).
+    pub vulnerable: usize,
+}
+
+/// `vulnerable_dependency` findings for the dependencies of `deps` hit
+/// by the offline advisory database in `dir` (ADR-0035) — one finding
+/// per dependency, listing every distinct vulnerability, so a package
+/// with ten CVEs does not bury the report under ten lines. The severity
+/// is the highest among them. Unreadable database files are reported on
+/// stderr and skipped: the rest of the scan does not depend on them.
+fn vulnerable_dependency_findings(
+    dir: &Path,
+    deps: &[crate::project::dependencies::Dependency],
+) -> Vec<ReportFinding> {
+    use crate::project::advisories;
+
+    let ecosystems: std::collections::BTreeSet<String> =
+        deps.iter().map(|d| d.ecosystem.clone()).collect();
+    let (db, errors) = advisories::load(dir, &ecosystems);
+    for error in errors {
+        eprintln!("[sast-engine] advisory database skipped: {error}");
+    }
+    let rank = |s: &str| match s {
+        "CRITICAL" => 4,
+        "HIGH" => 3,
+        "MEDIUM" => 2,
+        _ => 1,
+    };
+    advisories::find_vulnerable(deps, &db)
+        .into_iter()
+        .map(|hit| {
+            let dep = &hit.dependency;
+            let severity = hit
+                .advisories
+                .iter()
+                .map(|a| advisories::engine_severity(a))
+                .max_by_key(|s| rank(s))
+                .unwrap_or("MEDIUM");
+            // The 10 most severe with their summary (the list arrives
+            // sorted), the rest by identifier only: an old Django pin
+            // matches 45 advisories.
+            const DETAILED: usize = 10;
+            let mut listed: Vec<String> = hit
+                .advisories
+                .iter()
+                .take(DETAILED)
+                .map(|a| {
+                    format!(
+                        "{} ({}): {}",
+                        a.display_id(),
+                        advisories::engine_severity(a),
+                        a.summary
+                    )
+                })
+                .collect();
+            if hit.advisories.len() > DETAILED {
+                let rest: Vec<&str> = hit.advisories[DETAILED..]
+                    .iter()
+                    .map(|a| a.display_id())
+                    .collect();
+                listed.push(format!("also {}", rest.join(", ")));
+            }
+            let mut cwe: Vec<String> = hit.advisories.iter().flat_map(|a| a.cwe.clone()).collect();
+            cwe.sort();
+            cwe.dedup();
+            if cwe.is_empty() {
+                // CWE-1395: Dependency on Vulnerable Third-Party Component.
+                cwe.push("CWE-1395".to_string());
+            }
+            let solution = match &hit.fixed_version {
+                Some(fixed) => format!("Upgrade {} to {fixed} or later.", dep.name),
+                None => format!(
+                    "No published version fixes every vulnerability: replace or remove {}.",
+                    dep.name
+                ),
+            };
+            ReportFinding {
+                rule_key: "vulnerable_dependency".to_string(),
+                rule_name: "Vulnerable dependency".to_string(),
+                category: "DEPENDENCIES".to_string(),
+                severity: severity.to_string(),
+                risk: format!(
+                    "{} {} is affected by {} published vulnerabilit{}: {}",
+                    dep.name,
+                    hit.version,
+                    hit.advisories.len(),
+                    if hit.advisories.len() == 1 {
+                        "y"
+                    } else {
+                        "ies"
+                    },
+                    listed.join("; ")
+                ),
+                file: dep.file.to_string_lossy().to_string(),
+                line: dep.line,
+                solution: Some(solution),
+                cwe,
+                owasp: Some("A06:2021".to_string()),
+                taint_flow: None,
+                taint_flows: vec![],
+                code: dep.raw_line.clone(),
+                context_before: String::new(),
+                context_after: String::new(),
+                // The version is exact and the range comes from the
+                // advisory itself; the remaining doubt is whether the
+                // vulnerable code path is used.
+                confidence: 90,
+                benefit: String::new(),
+                committer: None,
+                rule_source: "advisory_db".to_string(),
+            }
+        })
+        .collect()
 }
 
 /// Loads and compiles all `.sca` files in a directory, **recursively**
@@ -1813,10 +1932,19 @@ pub fn run_scan(config: &ScanConfig) -> ScanReport {
                 rule_source: "json_builtin".to_string(),
             });
         }
+        let vulnerable = config
+            .advisories_dir
+            .as_deref()
+            .filter(|dir| dir.is_dir())
+            .map(|dir| vulnerable_dependency_findings(dir, &all_deps))
+            .unwrap_or_default();
+        let vulnerable_count = vulnerable.len();
+        all_findings.extend(vulnerable);
         dependency_stats = Some(DependencyStats {
             total_scanned: all_deps.len(),
             unpinned: unpinned.len(),
             ok: all_deps.len().saturating_sub(unpinned.len()),
+            vulnerable: vulnerable_count,
         });
         record_phase(
             &phase_label(

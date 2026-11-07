@@ -2,6 +2,7 @@
 //! its configuration, its suppressions, its dependencies, its database
 //! schema and its own test suite.
 
+pub mod advisories;
 pub mod database;
 pub mod dependencies;
 pub mod project_config;

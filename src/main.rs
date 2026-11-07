@@ -368,7 +368,9 @@ enum Command {
         /// Explicit test command (otherwise auto-detected).
         #[arg(long)]
         test_command: Option<String>,
-        /// Detects unpinned dependencies (static, no CVE matching).
+        /// Detects unpinned dependencies, and dependencies whose exact
+        /// version has a published vulnerability according to the offline
+        /// advisory database (see `--advisories-dir`).
         #[arg(long)]
         with_deps: bool,
         /// PostgreSQL host — enables the DB schema audit if present.
@@ -417,6 +419,13 @@ enum Command {
         /// at build time (safe fallback, no pack loaded).
         #[arg(long)]
         rule_updates_dir: Option<PathBuf>,
+        /// Offline advisory database of published vulnerabilities, read by
+        /// `--with-deps` — default: `advisories/` next
+        /// to the executable. Missing: no vulnerability matching, the rest
+        /// of `--with-deps` is unchanged. The scan itself never uses the
+        /// network.
+        #[arg(long)]
+        advisories_dir: Option<PathBuf>,
         /// `brand.json` runtime customization file (ticket #87/spec
         /// #83) — default: `brand.json` next to the executable
         /// (mirrors `custom_rules_dir`/`rule_updates_dir` above).
@@ -566,6 +575,7 @@ fn dispatch(command: Command) -> ExitCode {
             severity,
             custom_rules_dir,
             rule_updates_dir,
+            advisories_dir,
             brand_file,
             sbom,
             metrics_output,
@@ -595,6 +605,7 @@ fn dispatch(command: Command) -> ExitCode {
             severity,
             custom_rules_dir,
             rule_updates_dir,
+            advisories_dir,
             brand_file,
             sbom,
             metrics_output,
@@ -820,6 +831,7 @@ struct ScanArgs {
     severity: Option<String>,
     custom_rules_dir: Option<PathBuf>,
     rule_updates_dir: Option<PathBuf>,
+    advisories_dir: Option<PathBuf>,
     brand_file: Option<PathBuf>,
     sbom: bool,
     metrics_output: Option<PathBuf>,
@@ -852,6 +864,7 @@ fn run_scan_command(args: ScanArgs) -> ExitCode {
         severity,
         custom_rules_dir,
         rule_updates_dir,
+        advisories_dir,
         brand_file,
         sbom,
         metrics_output,
@@ -1039,6 +1052,14 @@ fn run_scan_command(args: ScanArgs) -> ExitCode {
             .ok()
             .and_then(|exe| exe.parent().map(|dir| dir.join("rules-updates")))
     });
+    // Default: next to the executable, where `sast-advisories update`
+    // writes by default when both binaries share a directory (ADR-0035).
+    // A missing directory only disables vulnerability matching.
+    let advisories_dir = advisories_dir.or_else(|| {
+        std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().map(|dir| dir.join("advisories")))
+    });
 
     // Default: next to the executable (ticket #87/spec #83, mirrors
     // `custom_rules_dir`/`rule_updates_dir` above). `load_brand_file`
@@ -1080,6 +1101,7 @@ fn run_scan_command(args: ScanArgs) -> ExitCode {
         },
         custom_rules_dir,
         rule_updates_dir,
+        advisories_dir,
         script_locale: Some(script_locale.clone()),
         brand_prefix: effective_prefix(&brand),
     };
