@@ -221,11 +221,24 @@ fn consider_file(
     if is_excluded(&rel_path, &filename, &config.exclude_patterns) {
         return;
     }
-    // `Path` equality compares components, so `src/./app.py` reached from
-    // a `./src` start path and `src/app.py` count as the same file.
-    if seen.insert(filepath.to_path_buf()) {
+    if seen.insert(dedup_key(filepath)) {
         files.push(filepath.to_path_buf());
     }
+}
+
+/// Identity of a file for deduplication: its canonical path (absolute,
+/// `..` and links resolved, and on macOS/Windows the case stored on
+/// disk), or the path as written when it cannot be resolved.
+///
+/// Bug reported by a tester (2026-11-09, ticket #147): comparing paths as
+/// written only merged `./src` with `src/`. Two `paths.include` entries
+/// naming the same folder another way — `app` and `app/../app`, `app` and
+/// its absolute path, `app` and `App` on a case-insensitive disk — made
+/// every file under it count twice in phase A and produce duplicate
+/// findings. The first spelling met is the one kept and reported; a link
+/// to a file already scanned now counts once too.
+fn dedup_key(filepath: &Path) -> PathBuf {
+    std::fs::canonicalize(filepath).unwrap_or_else(|_| filepath.to_path_buf())
 }
 
 /// What the walk does with a directory entry.
@@ -544,8 +557,10 @@ mod tests {
 
     /// Tester report (2026-11-09): a link to another project folder made
     /// its files count twice, and a link to a parent folder looped. The
-    /// walk now skips links to directories (like `os.walk` and `find .`)
-    /// and keeps links to files.
+    /// walk now skips links to directories (like `os.walk` and `find .`).
+    /// A link to a file is kept, but counts once with its target: `t.py`
+    /// (link to `s.py`, met after it) adds nothing, `outside.py` (link to
+    /// a file not otherwise scanned) is scanned.
     #[cfg(unix)]
     #[test]
     fn test_find_files_does_not_follow_directory_links() {
@@ -553,9 +568,11 @@ mod tests {
         write_file(&root, "site/pages/p1.py", "x\n");
         write_file(&root, "site/pages/p2.py", "x\n");
         write_file(&root, "shared/s.py", "x\n");
+        write_file(&root, "other/o.txt", "x\n");
         std::os::unix::fs::symlink("../site/pages", root.join("shared/pages_link")).unwrap();
         std::os::unix::fs::symlink("..", root.join("shared/loop")).unwrap();
-        std::os::unix::fs::symlink("s.py", root.join("shared/alias.py")).unwrap();
+        std::os::unix::fs::symlink("s.py", root.join("shared/t.py")).unwrap();
+        std::os::unix::fs::symlink("../other/o.txt", root.join("shared/outside.py")).unwrap();
         std::os::unix::fs::symlink("missing", root.join("shared/broken.py")).unwrap();
 
         let files = find_files(&root, &[Path::new(".")], &default_config());
@@ -573,11 +590,39 @@ mod tests {
         assert_eq!(
             rel,
             vec![
-                "shared/alias.py",
+                "shared/outside.py",
                 "shared/s.py",
                 "site/pages/p1.py",
                 "site/pages/p2.py"
             ]
+        );
+    }
+
+    /// Ticket #147: include entries naming the same folder another way
+    /// count each file once, under the first spelling met.
+    #[test]
+    fn test_find_files_equivalent_start_paths_count_once() {
+        let root = temp_project_dir();
+        write_file(&root, "app/web/p1.py", "x\n");
+        write_file(&root, "app/web/p2.py", "x\n");
+        let absolute = root.join("app");
+        let mut starts = vec![
+            Path::new("app"),
+            Path::new("app/../app"),
+            absolute.as_path(),
+            Path::new("app/web/../web"),
+        ];
+        // A case-insensitive disk (default on macOS and Windows) also
+        // resolves another case to the same folder.
+        let case_insensitive = root.join("APP").is_dir();
+        if case_insensitive {
+            starts.push(Path::new("APP/web"));
+        }
+        let files = find_files(&root, &starts, &default_config());
+        std::fs::remove_dir_all(&root).ok();
+        assert_eq!(
+            files,
+            vec![root.join("app/web/p1.py"), root.join("app/web/p2.py")]
         );
     }
 
