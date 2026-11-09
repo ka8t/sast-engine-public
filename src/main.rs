@@ -127,12 +127,14 @@ fn output_excludes(root: &Path, data_dir: Option<&Path>, output: Option<&Path>) 
 ///    (`["."]`).
 ///
 /// In every case the returned exclusions start with `DEFAULT_EXCLUDES`
-/// (see its doc comment); the project's own patterns follow.
+/// (see its doc comment); the project's own patterns follow. The third
+/// value says where the paths came from, for the scope line printed at
+/// scan start (ticket #140).
 fn resolve_project_paths(
     root: &Path,
     quiet: bool,
     script_locale: &serde_json::Value,
-) -> (Vec<String>, Vec<String>) {
+) -> (Vec<String>, Vec<String>, PathsOrigin) {
     // Prompt messages in the `--lang` language (ticket #124 — they were
     // hard-coded in French).
     let say = |key: &str| sast_engine::i18n::t(script_locale, key);
@@ -146,7 +148,11 @@ fn resolve_project_paths(
             } else {
                 include
             };
-            return (include, with_default_excludes(exclude));
+            return (
+                include,
+                with_default_excludes(exclude),
+                PathsOrigin::ConfigFile,
+            );
         }
         Err(error) => {
             emit_warning(&format!(
@@ -158,7 +164,11 @@ fn resolve_project_paths(
                     )
                     .replace("{error}", &error)
             ));
-            return (vec![".".to_string()], with_default_excludes(Vec::new()));
+            return (
+                vec![".".to_string()],
+                with_default_excludes(Vec::new()),
+                PathsOrigin::InvalidConfig,
+            );
         }
         Ok(None) => {}
     }
@@ -210,6 +220,7 @@ fn resolve_project_paths(
                 return (
                     info.include_paths,
                     with_default_excludes(info.exclude_patterns),
+                    PathsOrigin::ConfigFile,
                 );
             }
             Ok(_) => {
@@ -219,7 +230,87 @@ fn resolve_project_paths(
         }
     }
 
-    (vec![".".to_string()], with_default_excludes(Vec::new()))
+    (
+        vec![".".to_string()],
+        with_default_excludes(Vec::new()),
+        PathsOrigin::NoConfig,
+    )
+}
+
+/// Entries of an include or exclude list printed on the scope line before
+/// the rest is counted. A list one entry longer is printed in full: "+1
+/// more" would take the room of the entry itself.
+const SCOPE_LIST_MAX: usize = 5;
+
+/// Where the include/exclude paths of a scan come from (ticket #140).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PathsOrigin {
+    /// `audit.config.json` read at the project root (or just written by
+    /// the interactive prompt).
+    ConfigFile,
+    /// `audit.config.json` present but unreadable or invalid JSON: the
+    /// whole project is scanned (the error is reported separately).
+    InvalidConfig,
+    /// No `audit.config.json` and no accepted prompt: the whole project.
+    NoConfig,
+}
+
+/// The scope line printed once at scan start (ticket #140): where the
+/// paths come from, the include paths applied, and the exclusions the
+/// user chose (project file and `--exclude`), the built-in ones only as a
+/// count. A tester's scan widened to the whole project after a rewrite of
+/// `audit.config.json`, and nothing in the output said so.
+///
+/// `include` of `["."]` reads as "the whole project". Shown like the
+/// other progress lines: in normal mode and as a JSON log event, not with
+/// `--quiet`, which only keeps results, warnings and errors (ticket #44);
+/// the problems that widen the scope silently are warnings, so they still
+/// show under `--quiet`.
+fn scope_line(
+    root: &Path,
+    origin: PathsOrigin,
+    include: &[String],
+    excludes: &[String],
+    say: impl Fn(&str) -> String,
+) -> String {
+    let source = match origin {
+        PathsOrigin::ConfigFile => say("scan_scope_source_config"),
+        PathsOrigin::InvalidConfig => say("scan_scope_source_invalid"),
+        PathsOrigin::NoConfig => {
+            say("scan_scope_source_none").replace("{path}", &root.display().to_string())
+        }
+    };
+    // A tester's file listed 67 project folders: past `SCOPE_LIST_MAX`
+    // entries, the list is cut and the rest counted.
+    let shorten = |items: &[&str]| -> String {
+        if items.len() <= SCOPE_LIST_MAX + 1 {
+            return items.join(", ");
+        }
+        let more =
+            say("scan_scope_more").replace("{count}", &(items.len() - SCOPE_LIST_MAX).to_string());
+        format!("{}, {more}", items[..SCOPE_LIST_MAX].join(", "))
+    };
+    let include = if include.iter().all(|p| p == "." || p == "./") {
+        say("scan_scope_whole_project")
+    } else {
+        shorten(&include.iter().map(String::as_str).collect::<Vec<_>>())
+    };
+    let chosen: Vec<&str> = excludes
+        .iter()
+        .map(String::as_str)
+        .filter(|p| !DEFAULT_EXCLUDES.contains(p))
+        .collect();
+    let defaults =
+        say("scan_scope_default_excludes").replace("{count}", &DEFAULT_EXCLUDES.len().to_string());
+    let exclude = if chosen.is_empty() {
+        defaults
+    } else {
+        format!("{} + {defaults}", shorten(&chosen))
+    };
+    say("scan_scope_line")
+        .replace("{source}", &source)
+        .replace("{include}", &include)
+        .replace("{exclude}", &exclude)
 }
 
 /// Rule packs directory for `scan` and `list-rules` (ADR-0037): the
@@ -775,18 +866,83 @@ mod tests {
         let after_invalid = std::fs::read_to_string(&config).unwrap();
         std::fs::remove_dir_all(&root).ok();
 
-        assert_eq!(absent, (vec![".".to_string()], defaults.clone()));
+        assert_eq!(
+            absent,
+            (
+                vec![".".to_string()],
+                defaults.clone(),
+                PathsOrigin::NoConfig
+            )
+        );
         assert_eq!(valid.0, vec!["src/".to_string()]);
+        assert_eq!(valid.2, PathsOrigin::ConfigFile);
         assert_eq!(
             valid.1,
             with_default_excludes(vec!["legacy/".into(), "vendor/".into()])
         );
         assert_eq!(empty_include.0, vec![".".to_string()]);
         assert_eq!(empty_include.1, defaults);
-        assert_eq!(invalid, (vec![".".to_string()], defaults));
+        assert_eq!(empty_include.2, PathsOrigin::ConfigFile);
+        assert_eq!(
+            invalid,
+            (vec![".".to_string()], defaults, PathsOrigin::InvalidConfig)
+        );
         assert_eq!(
             after_invalid, invalid_text,
             "an invalid file is never rewritten"
+        );
+    }
+
+    /// Ticket #140: the scope line names the source, reads `["."]` as
+    /// the whole project, lists the user's exclusions and counts the
+    /// built-in ones.
+    #[test]
+    fn test_scope_line_per_origin() {
+        let locale = sast_engine::i18n::load_script_locale("en");
+        let say = |key: &str| sast_engine::i18n::t(&locale, key);
+        let root = Path::new("/work/app");
+        let defaults = with_default_excludes(Vec::new());
+        let count = DEFAULT_EXCLUDES.len();
+
+        let none = scope_line(root, PathsOrigin::NoConfig, &[".".into()], &defaults, say);
+        let mut chosen = with_default_excludes(vec!["legacy/".into()]);
+        chosen.push("*.mustache".into());
+        let config = scope_line(
+            root,
+            PathsOrigin::ConfigFile,
+            &["src/".into(), "web/".into()],
+            &chosen,
+            say,
+        );
+        let invalid = scope_line(
+            root,
+            PathsOrigin::InvalidConfig,
+            &[".".into()],
+            &defaults,
+            say,
+        );
+
+        assert_eq!(
+            none,
+            format!(
+                "Scope (no audit.config.json in /work/app): include the whole project; exclude {count} default patterns"
+            )
+        );
+        assert_eq!(
+            config,
+            format!(
+                "Scope (audit.config.json): include src/, web/; exclude legacy/, *.mustache + {count} default patterns"
+            )
+        );
+        assert!(
+            invalid.starts_with("Scope (invalid audit.config.json): include the whole project")
+        );
+
+        let many: Vec<String> = (1..=67).map(|i| format!("app-{i}/")).collect();
+        let long = scope_line(root, PathsOrigin::ConfigFile, &many, &defaults, say);
+        assert!(
+            long.contains("app-5/, +62 more;") && !long.contains("app-6/"),
+            "{long}"
         );
     }
 
@@ -1678,8 +1834,36 @@ fn run_scan_command(args: ScanArgs) -> ExitCode {
         return ExitCode::from(4);
     }
 
-    let (include_paths, base_excludes) = resolve_project_paths(&path, quiet, &script_locale);
+    let (include_paths, base_excludes, paths_origin) =
+        resolve_project_paths(&path, quiet, &script_locale);
     let exclude_patterns: Vec<String> = base_excludes.into_iter().chain(exclude).collect();
+
+    // Ticket #140 — the scope actually applied, once per scan.
+    emit_progress(
+        quiet,
+        &format!(
+            "[sast-engine] {}",
+            scope_line(
+                &path,
+                paths_origin,
+                &include_paths,
+                &exclude_patterns,
+                |key| sast_engine::i18n::t(&script_locale, key),
+            )
+        ),
+    );
+
+    // Ticket #140 — paths keys that are ignored, wholly or partly, so the
+    // scope silently differs from what the file seems to say. One
+    // grouped warning, never suppressed by `--quiet` (like #138 below).
+    let malformed_paths = sast_engine::project::project_config::malformed_paths_keys(&path);
+    if !malformed_paths.is_empty() {
+        emit_warning(&format!(
+            "[sast-engine] {}",
+            sast_engine::i18n::t(&script_locale, "scan_paths_config_malformed")
+                .replace("{keys}", &malformed_paths.join(", "))
+        ));
+    }
 
     // Ticket #138 — one grouped warning, never suppressed by `--quiet`
     // (same treatment as the unsupported sections below).

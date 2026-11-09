@@ -216,6 +216,52 @@ pub fn read_paths_config(root: &Path) -> Option<(Vec<String>, Vec<String>)> {
     Some((as_string_vec("include"), as_string_vec("exclude")))
 }
 
+/// Keys of `audit.config.json` that should restrict the scan but are
+/// ignored, wholly or partly, by [`read_paths_config`] — ticket #140. A
+/// tester rewrote the file, the scan silently fell back to the whole
+/// project, and nothing said why. Reported, in this order:
+///
+/// - `paths`: present but not an object (`"paths": []`);
+/// - `paths.include` / `paths.exclude`: not an array (`"include": "src"`)
+///   or holding a non-string item (dropped one by one);
+/// - `include` / `exclude` at the top level instead of under `paths`.
+///
+/// Empty when the file is absent or invalid JSON (reported elsewhere) or
+/// when every key is well formed. Python ignores all these cases silently
+/// (`sca/config.py::load_config`); the warning is a deliberate addition,
+/// the scan itself still behaves the same.
+pub fn malformed_paths_keys(root: &Path) -> Vec<String> {
+    let Some(json) = config_json(root) else {
+        return Vec::new();
+    };
+    let Some(top_level) = json.as_object() else {
+        return Vec::new();
+    };
+    let mut keys = Vec::new();
+    match top_level.get("paths") {
+        Some(serde_json::Value::Object(paths)) => {
+            for key in ["include", "exclude"] {
+                let well_formed = match paths.get(key) {
+                    None => true,
+                    Some(serde_json::Value::Array(items)) => items.iter().all(|v| v.is_string()),
+                    Some(_) => false,
+                };
+                if !well_formed {
+                    keys.push(format!("paths.{key}"));
+                }
+            }
+        }
+        Some(_) => keys.push("paths".to_string()),
+        None => {}
+    }
+    for key in ["include", "exclude"] {
+        if top_level.contains_key(key) {
+            keys.push(key.to_string());
+        }
+    }
+    keys
+}
+
 /// Reads `rules.disabled` (list of rule ids) from an existing
 /// `audit.config.json` at the project root — ticket #40/spec #27 (section
 /// silently ignored until now, only `paths.*` was read). Empty if
@@ -765,6 +811,50 @@ mod tests {
         );
         assert_eq!(read_max_high_threshold_config(&dir), 3);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Ticket #140: every malformed or misplaced paths key is named; a
+    /// well-formed file, an absent file and invalid JSON report nothing.
+    #[test]
+    fn test_malformed_paths_keys_cases() {
+        let dir = std::env::temp_dir().join(format!("sast-pc-malformed-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let check = |content: Option<&str>| -> Vec<String> {
+            let path = dir.join("audit.config.json");
+            match content {
+                Some(text) => std::fs::write(&path, text).unwrap(),
+                None => {
+                    let _ = std::fs::remove_file(&path);
+                }
+            }
+            malformed_paths_keys(&dir)
+        };
+        let cases: [(Option<&str>, &[&str]); 9] = [
+            (None, &[]),
+            (Some("{not json"), &[]),
+            (
+                Some(r#"{"paths": {"include": ["src"], "exclude": ["x/"]}}"#),
+                &[],
+            ),
+            (Some(r#"{"project": {"name": "a"}}"#), &[]),
+            (Some(r#"{"paths": {"include": "src"}}"#), &["paths.include"]),
+            (
+                Some(r#"{"paths": {"include": ["src", 3], "exclude": {}}}"#),
+                &["paths.include", "paths.exclude"],
+            ),
+            (Some(r#"{"paths": []}"#), &["paths"]),
+            (Some(r#"{"include": ["src"]}"#), &["include"]),
+            (
+                Some(r#"{"paths": "src", "include": ["a"], "exclude": ["b"]}"#),
+                &["paths", "include", "exclude"],
+            ),
+        ];
+        let results: Vec<Vec<String>> = cases.iter().map(|(text, _)| check(*text)).collect();
+        std::fs::remove_dir_all(&dir).unwrap();
+        for ((text, expected), got) in cases.iter().zip(results) {
+            assert_eq!(got, expected.to_vec(), "{text:?}");
+        }
     }
 
     #[test]
