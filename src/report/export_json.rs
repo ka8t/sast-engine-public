@@ -27,7 +27,13 @@ use crate::report::exports::sarif::ReportFinding;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExportData {
+    /// Format of this file (`1.0`), not the engine version.
     pub version: String,
+    /// Build of the engine that wrote it (ticket #149,
+    /// [`crate::BUILD_VERSION`]). Empty when reading a baseline written
+    /// before that field existed.
+    #[serde(default)]
+    pub tool_version: String,
     pub timestamp: String,
     pub date: String,
     pub totals: BTreeMap<String, usize>,
@@ -61,6 +67,7 @@ pub fn build_export_data(
 ) -> ExportData {
     ExportData {
         version: "1.0".to_string(),
+        tool_version: crate::BUILD_VERSION.to_string(),
         timestamp: timestamp.to_string(),
         date: date.to_string(),
         totals: compute_totals(findings),

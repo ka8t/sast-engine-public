@@ -37,12 +37,57 @@ mod rules_crypto;
 #[allow(dead_code)]
 mod pack_format;
 
+#[path = "src/build_version.rs"]
+mod build_version;
+
 fn main() {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR absent");
     let out_dir = env::var("OUT_DIR").expect("OUT_DIR absent");
 
     write_builtin_pack(&manifest_dir, &out_dir);
     generate_editor_release_data(&out_dir);
+    export_build_version(&manifest_dir);
+}
+
+/// Exports `SAST_BUILD_VERSION` (ticket #149, `src/build_version.rs`):
+/// the package version, commit count and short hash from git, `-dirty`
+/// when tracked files differ from the commit. Any git failure (git not
+/// installed, no repository) gives `+unknown`, never a build error.
+///
+/// Reruns when the commit changes (`HEAD`, branch refs, packed refs) or
+/// files are staged (the index), so a new commit changes the version
+/// without touching any file. An edit of a tracked file that is never
+/// staged does not rerun the script: such a build may lack `-dirty`.
+fn export_build_version(manifest_dir: &str) {
+    let git = |args: &[&str]| -> Option<String> {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(manifest_dir)
+            .args(args)
+            .output()
+            .ok()?;
+        output
+            .status
+            .success()
+            .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+    };
+    if let Some(git_dir) = git(&["rev-parse", "--absolute-git-dir"]) {
+        let git_dir = Path::new(&git_dir);
+        for watched in ["HEAD", "index", "packed-refs", "refs/heads"] {
+            println!("cargo:rerun-if-changed={}", git_dir.join(watched).display());
+        }
+    }
+    let commits = git(&["rev-list", "--count", "HEAD"]);
+    let hash = git(&["rev-parse", "--short=7", "HEAD"]);
+    let dirty = git(&["status", "--porcelain", "--untracked-files=no"])
+        .is_some_and(|changes| !changes.is_empty());
+    let version = build_version::format_build_version(
+        &env::var("CARGO_PKG_VERSION").expect("CARGO_PKG_VERSION absent"),
+        commits.as_deref(),
+        hash.as_deref(),
+        dirty,
+    );
+    println!("cargo:rustc-env=SAST_BUILD_VERSION={version}");
 }
 
 /// Writes `rules/builtin.scapack` in the directory of the compiled

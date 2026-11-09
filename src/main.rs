@@ -1029,7 +1029,7 @@ mod tests {
 #[derive(Parser)]
 #[command(
     name = "sast-engine",
-    version,
+    version = sast_engine::BUILD_VERSION,
     about = "SAST engine — Rust port of CodeFixture Audit"
 )]
 struct Cli {
@@ -1298,7 +1298,7 @@ fn install_panic_hook(lang: &str) {
         let thread = std::thread::current();
         let entry = format!(
             "sast-engine {}\nincident: {incident}\nthread: {}\n{info}\n\nbacktrace:\n{}\n\n",
-            env!("CARGO_PKG_VERSION"),
+            sast_engine::BUILD_VERSION,
             thread.name().unwrap_or("<unnamed>"),
             std::backtrace::Backtrace::force_capture()
         );
@@ -1612,7 +1612,7 @@ fn write_sbom(
         project_name,
         "",
         &effective_tool_name(brand),
-        env!("CARGO_PKG_VERSION"),
+        sast_engine::BUILD_VERSION,
         &now.to_rfc3339(),
     );
     let json = sbom
@@ -1833,6 +1833,13 @@ fn run_scan_command(args: ScanArgs) -> ExitCode {
         );
         return ExitCode::from(4);
     }
+
+    // Ticket #149 — the exact build first, even with `--quiet`: one line,
+    // and the first thing a bug report needs.
+    emit_result(&format!(
+        "[sast-engine] sast-engine {}",
+        sast_engine::BUILD_VERSION
+    ));
 
     let (include_paths, base_excludes, paths_origin) =
         resolve_project_paths(&path, quiet, &script_locale);
@@ -2070,7 +2077,7 @@ fn run_scan_command(args: ScanArgs) -> ExitCode {
             let sarif = build_sarif_report(
                 &report.findings,
                 "sast-engine",
-                env!("CARGO_PKG_VERSION"),
+                sast_engine::BUILD_VERSION,
                 &effective_website_url(&brand),
             );
             match serde_json::to_string_pretty(&sarif) {
@@ -2092,7 +2099,7 @@ fn run_scan_command(args: ScanArgs) -> ExitCode {
                 project_description: String::new(),
                 project_path: config.root.display().to_string(),
                 tool_name: effective_tool_name(&brand),
-                tool_version: env!("CARGO_PKG_VERSION").to_string(),
+                tool_version: sast_engine::BUILD_VERSION.to_string(),
                 company_name: effective_company_name(&brand),
                 report_lang: lang,
                 date_str: now.format("%d/%m/%Y à %H:%M").to_string(),
@@ -2209,7 +2216,7 @@ fn run_scan_command(args: ScanArgs) -> ExitCode {
         let metrics = sast_engine::report::exports::metrics::build_scan_metrics(
             &report,
             "sast-engine",
-            env!("CARGO_PKG_VERSION"),
+            sast_engine::BUILD_VERSION,
             &now.to_rfc3339(),
             t_command_start.elapsed().as_millis(),
             exit_code,
