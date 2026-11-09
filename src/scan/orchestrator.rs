@@ -648,6 +648,7 @@ fn load_rules(rules_dir: &Path) -> (Vec<serde_json::Value>, Vec<(PathBuf, String
         filenames: vec![],
         exclude_patterns: vec![],
         prune_excludes: vec![],
+        skip_build_output: false,
     };
     // Alphabetical sort by full path — mirrors
     // `sorted(rules_dir.rglob("*.sca"))` on the Python side (`rule_loader.py`).
@@ -1129,6 +1130,7 @@ pub fn run_scan(config: &ScanConfig) -> ScanReport {
             .collect(),
         exclude_patterns: config.exclude_patterns.clone(),
         prune_excludes: config.exclude_patterns.clone(),
+        skip_build_output: true,
     };
     let include_paths: Vec<&Path> = config.include_paths.iter().map(Path::new).collect();
     let files = find_files(&config.root, &include_paths, &discovery_config);

@@ -25,9 +25,17 @@ use std::path::{Path, PathBuf};
 use crate::scan::discovery::{WalkEntry, classify_entry};
 use crate::scan::orchestrator::SourceLanguage;
 
-/// Directories never relevant for detection — exact mirror of
-/// `sca/projects.py::_EXCLUDED_DIRS`. Hidden directories
+/// Directories never relevant for detection — mirror of
+/// `sca/projects.py::_EXCLUDED_DIRS`, plus `target`. Hidden directories
 /// (`.` prefix) are excluded separately, same rule as Python.
+///
+/// Deliberate deviation from Python (ticket #148): `target`, Maven's
+/// build output, was missing although Gradle's `build` is listed. A
+/// tester's 66-module Java project got an `audit.config.json` without
+/// `**/target/**`, so built copies of `src/main/resources` were scanned
+/// as source. The written file stays editable for a project whose code
+/// really lives in a `target` folder; the scan walk also skips Maven and
+/// Gradle output on its own (`discovery::is_build_output_dir`).
 const EXCLUDED_DIRS: &[&str] = &[
     "node_modules",
     "__pycache__",
@@ -37,6 +45,7 @@ const EXCLUDED_DIRS: &[&str] = &[
     ".git",
     "dist",
     "build",
+    "target",
     ".tox",
     ".mypy_cache",
     ".pytest_cache",
@@ -539,6 +548,27 @@ mod tests {
         assert_eq!(
             valid,
             Some(serde_json::json!({"thresholds": {"max_high": 2}}))
+        );
+    }
+
+    /// Ticket #148: a top-level Maven `target/` is not proposed as a
+    /// project folder, and the written exclusions hold `**/target/**`.
+    #[test]
+    fn test_auto_detect_skips_and_excludes_maven_target() {
+        let dir = std::env::temp_dir().join(format!("sast-pc-target-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        write_file(&dir, "pom.xml", "<project/>\n");
+        write_file(&dir, "src/main/java/A.java", "class A {}\n");
+        write_file(&dir, "target/classes/templates/v.mustache", "{{x}}\n");
+
+        let info = auto_detect_project(&dir);
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(info.include_paths, vec!["src/".to_string()]);
+        assert_eq!(info.languages, vec!["java".to_string()]);
+        assert!(
+            info.exclude_patterns.contains(&"**/target/**".to_string()),
+            "{:?}",
+            info.exclude_patterns
         );
     }
 

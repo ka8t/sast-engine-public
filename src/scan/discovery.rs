@@ -157,6 +157,38 @@ pub struct FileDiscoveryConfig {
     /// `exclude_patterns` on the caller side, but kept separate (mirror
     /// of the two distinct config lists on the Python side).
     pub prune_excludes: Vec<String>,
+    /// Skip Maven and Gradle build output met during the walk
+    /// ([`is_build_output_dir`]) — on for the project scan, off for
+    /// loading rule files.
+    pub skip_build_output: bool,
+}
+
+/// Maven and Gradle build output: a `target` folder next to a `pom.xml`,
+/// a `build` folder next to a `build.gradle` or `build.gradle.kts`.
+///
+/// Deliberate deviation from Python (ticket #148), which scans them. A
+/// built module holds copies of `src/main/resources` (templates, YAML,
+/// properties) under `target/classes`, so the same file was analysed
+/// twice and its findings reported twice. The build file next to the
+/// folder is the test, rather than the folder name alone: a default
+/// exclusion cannot be removed by a project (ticket #132), and a folder
+/// named `target` or `build` that is not build output stays scanned. A
+/// start path of `paths.include` naming such a folder is still walked:
+/// only folders met during the walk are checked.
+pub fn is_build_output_dir(dir: &Path) -> bool {
+    let Some(name) = dir.file_name().and_then(|n| n.to_str()) else {
+        return false;
+    };
+    let Some(parent) = dir.parent() else {
+        return false;
+    };
+    match name {
+        "target" => parent.join("pom.xml").is_file(),
+        "build" => {
+            parent.join("build.gradle").is_file() || parent.join("build.gradle.kts").is_file()
+        }
+        _ => false,
+    }
 }
 
 /// Discovers files under `root` (project root, used to compute
@@ -323,6 +355,9 @@ fn walk_dir(
             !matches_any_exclude(&rel, &config.prune_excludes)
         });
     }
+    if config.skip_build_output {
+        subdirs.retain(|d| !is_build_output_dir(d));
+    }
 
     for filepath in &filepaths {
         consider_file(filepath, root, config, files, seen);
@@ -365,6 +400,7 @@ mod tests {
             filenames: vec![],
             exclude_patterns: vec![],
             prune_excludes: vec![],
+            skip_build_output: false,
         }
     }
 
@@ -452,6 +488,7 @@ mod tests {
             filenames: vec![],
             exclude_patterns: vec!["node_modules/".to_string()],
             prune_excludes: vec!["node_modules/".to_string()],
+            skip_build_output: false,
         };
         let files = find_files(&root, &[Path::new(".")], &config);
         assert_eq!(files.len(), 1, "node_modules/ élagué, seul a.py reste");
@@ -489,6 +526,7 @@ mod tests {
             filenames: vec![],
             exclude_patterns: vec!["legacy/".to_string()],
             prune_excludes: vec!["legacy/".to_string()],
+            skip_build_output: false,
         };
         let starts = [Path::new("legacy/old.py"), Path::new("src/app.js")];
         assert!(find_files(&root, &starts, &config).is_empty());
@@ -522,6 +560,7 @@ mod tests {
             filenames: vec![],
             exclude_patterns: vec!["legacy/".to_string()],
             prune_excludes: vec![],
+            skip_build_output: false,
         };
         let mut files = Vec::new();
         let mut seen = HashSet::new();
@@ -544,6 +583,7 @@ mod tests {
             filenames: vec![],
             exclude_patterns: vec![],
             prune_excludes: vec!["vendor/".to_string()],
+            skip_build_output: false,
         };
         let mut files = Vec::new();
         let mut seen = HashSet::new();
@@ -639,6 +679,54 @@ mod tests {
         assert_eq!(files, vec![root.join("alias/a.py")]);
     }
 
+    /// Ticket #148: Maven `target/` and Gradle `build/` next to their
+    /// build file are skipped; the same names without a build file are
+    /// scanned; a start path naming build output is walked; the flag off
+    /// (rule loading) changes nothing.
+    #[test]
+    fn test_find_files_skips_maven_and_gradle_build_output() {
+        let root = temp_project_dir();
+        write_file(&root, "api/pom.xml", "<project/>\n");
+        write_file(&root, "api/src/main/a.py", "x\n");
+        write_file(&root, "api/target/classes/a.py", "x\n");
+        write_file(&root, "app/build.gradle.kts", "\n");
+        write_file(&root, "app/src/b.py", "x\n");
+        write_file(&root, "app/build/generated/b.py", "x\n");
+        write_file(&root, "tools/target/c.py", "x\n");
+        write_file(&root, "tools/build/d.py", "x\n");
+        let mut config = default_config();
+        config.skip_build_output = true;
+
+        let rel = |files: Vec<PathBuf>| -> Vec<String> {
+            files
+                .iter()
+                .map(|f| {
+                    f.strip_prefix(&root)
+                        .unwrap()
+                        .to_string_lossy()
+                        .replace('\\', "/")
+                })
+                .collect()
+        };
+        let scanned = rel(find_files(&root, &[Path::new(".")], &config));
+        let named = rel(find_files(&root, &[Path::new("api/target")], &config));
+        config.skip_build_output = false;
+        let all = find_files(&root, &[Path::new(".")], &config).len();
+        std::fs::remove_dir_all(&root).ok();
+
+        assert_eq!(
+            scanned,
+            vec![
+                "api/src/main/a.py",
+                "app/src/b.py",
+                "tools/build/d.py",
+                "tools/target/c.py"
+            ]
+        );
+        assert_eq!(named, vec!["api/target/classes/a.py"]);
+        assert_eq!(all, 6);
+    }
+
     #[test]
     fn test_find_files_no_extension_filter_matches_everything() {
         let root = temp_project_dir();
@@ -649,6 +737,7 @@ mod tests {
             filenames: vec![],
             exclude_patterns: vec![],
             prune_excludes: vec![],
+            skip_build_output: false,
         };
         let files = find_files(&root, &[Path::new(".")], &config);
         assert_eq!(files.len(), 2);
@@ -670,6 +759,7 @@ mod tests {
             filenames: vec!["Dockerfile".to_string()],
             exclude_patterns: vec![],
             prune_excludes: vec![],
+            skip_build_output: false,
         };
         let files = find_files(&root, &[Path::new(".")], &config);
         assert_eq!(files.len(), 1, "seul Dockerfile doit matcher : {files:?}");
@@ -691,6 +781,7 @@ mod tests {
             filenames: vec!["Dockerfile".to_string()],
             exclude_patterns: vec![],
             prune_excludes: vec![],
+            skip_build_output: false,
         };
         let files = find_files(&root, &[Path::new(".")], &config);
         assert_eq!(
@@ -714,6 +805,7 @@ mod tests {
             filenames: vec!["Dockerfile".to_string()],
             exclude_patterns: vec![],
             prune_excludes: vec![],
+            skip_build_output: false,
         };
         let files = find_files(&root, &[Path::new(".")], &config);
         assert_eq!(files.len(), 2, "Dockerfile + a.py, pas b.txt : {files:?}");
