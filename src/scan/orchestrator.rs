@@ -250,21 +250,24 @@ pub struct ScanConfig {
     /// `exclude_patterns` — cf. `project_config.rs`.
     pub include_paths: Vec<String>,
     /// Directory holding the `.sca` rule files. Ignored if
-    /// `use_embedded_rules` is active.
+    /// `rule_packs_dir` is set.
     pub rules_dir: PathBuf,
-    /// Compiles the builtin catalog embedded in the binary
-    /// (`embedded_rules::EMBEDDED_RULES`) entirely in memory, without
-    /// going through `rules_dir` or disk — cf.
-    /// `embedded_rules::compile_embedded_rules`. `false` by default
-    /// (unchanged behavior: rules read from `rules_dir`, used by
-    /// `--rules <DIR>` and by all existing tests).
-    pub use_embedded_rules: bool,
+    /// Directory of encrypted rule packs (`*.scapack`, ADR-0037, ticket
+    /// #141) to load the catalog from — `rules/` next to the executable
+    /// for the CLI. `None` by default: rules are read from `rules_dir`
+    /// (`--rules <DIR>` and most tests). Packs are opened and compiled in
+    /// memory, see `rules::catalog`.
+    pub rule_packs_dir: Option<PathBuf>,
+    /// Client key (ADR-0037, ticket #142) used, with the public demo key,
+    /// to open the packs of `rule_packs_dir` — from `sast-engine.key`.
+    /// `None` by default: only packs encrypted with the demo key open.
+    pub client_key: Option<crate::rules::client_key::ClientKey>,
     /// Custom rules directory, loaded IN ADDITION to the builtin
     /// catalog (never as a replacement) — ticket #84/spec #82, mirrors
     /// `_load_custom_rules`/`{SCRIPT_DIR}/custom-rules/` on the
     /// Python side (`rule_engine.py:714-731`). `None` (default): unchanged
     /// behavior, no custom rule consulted. **Ignored if
-    /// `use_embedded_rules` is false**: `--rules <DIR>` (explicit
+    /// `rule_packs_dir` is `None`**: `--rules <DIR>` (explicit
     /// full replacement) stays priority and exclusive, consistent with the
     /// acceptance criterion of the ticket — a user who explicitly requests
     /// an isolated test catalog must never see their custom rules
@@ -276,7 +279,7 @@ pub struct ScanConfig {
     /// of `_load_update_packs`/`{SCRIPT_DIR}/rules-updates/` on the
     /// Python side (`rule_engine.py:357-420`). `None` (default):
     /// unchanged behavior, no pack consulted. **Ignored if
-    /// `use_embedded_rules` is false**, same rule as
+    /// `rule_packs_dir` is `None`**, same rule as
     /// `custom_rules_dir` above: `--rules <DIR>` stays exclusive.
     /// See `rule_packs.rs` for verification details and the safe
     /// fallback if no publisher public key was injected at build time.
@@ -410,7 +413,8 @@ impl Default for ScanConfig {
             root: PathBuf::new(),
             include_paths: vec![".".to_string()],
             rules_dir: PathBuf::new(),
-            use_embedded_rules: false,
+            rule_packs_dir: None,
+            client_key: None,
             custom_rules_dir: None,
             rule_updates_dir: None,
             suppress_file: None,
@@ -473,6 +477,10 @@ pub struct ScanReport {
     /// robustness of `compute_file_summaries` on the Python side (a broken
     /// rule doesn't stop the others).
     pub rule_errors: Vec<(PathBuf, String)>,
+    /// Valid rule packs skipped because they need a key other than the
+    /// demo key and the client key (ticket #142): path and the
+    /// fingerprint of the key they need. Reported once by the CLI.
+    pub skipped_rule_packs: Vec<(PathBuf, String)>,
     /// Catalog of compiled rules, indexed by id — needed by the
     /// HTML report (`report::html::generate_html`, `fix_before`/
     /// `fix_after` of `report::findings_html::generate_fix_suggestion`).
@@ -774,7 +782,7 @@ fn engine_finding_to_report(
         confidence: f.confidence,
         benefit: extract_i18n_block(rule_json, "benefit", lang),
         committer: None,
-        rule_source: "json_builtin".to_string(),
+        rule_source: rule_source_of(rule_json).to_string(),
     }
 }
 
@@ -858,7 +866,20 @@ fn taint_finding_to_report(
         confidence: 90,
         benefit: extract_i18n_block(rule_json, "benefit", lang),
         committer: None,
-        rule_source: "json_builtin".to_string(),
+        rule_source: rule_source_of(rule_json).to_string(),
+    }
+}
+
+/// `ReportFinding::rule_source` from the rule's `"origin"` (ADR-0037,
+/// tickets #143/#144, set by `rules::catalog` and for the custom rules
+/// folder): `json_custom` for the client's own rules, `json_official` for
+/// a signed CodeFixture pack, `json_builtin` otherwise (public builtin
+/// catalog, `--rules <DIR>`).
+fn rule_source_of(rule_json: &serde_json::Value) -> &'static str {
+    match rule_json.get("origin").and_then(|v| v.as_str()) {
+        Some("client") => "json_custom",
+        Some("official") => "json_official",
+        _ => "json_builtin",
     }
 }
 
@@ -1046,7 +1067,7 @@ fn phase_a_language_summary(files: impl IntoIterator<Item = (&'static str, Strin
             }
             let mut split: Vec<(String, usize)> = kinds.into_iter().collect();
             // Stable sort on a BTreeMap's alphabetical order: ties stay alphabetical.
-            split.sort_by(|a, b| b.1.cmp(&a.1));
+            split.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
             let detail = split
                 .iter()
                 .map(|(kind, n)| format!("{kind} {n}"))
@@ -1171,20 +1192,37 @@ pub fn run_scan(config: &ScanConfig) -> ScanReport {
         }
     };
     let t_rules = std::time::Instant::now();
-    let (mut loaded_rule_jsons, mut rule_errors) = if config.use_embedded_rules {
-        crate::rules::embedded_rules::compile_embedded_rules()
-    } else {
-        load_rules(&config.rules_dir)
+    let mut skipped_rule_packs: Vec<(PathBuf, String)> = Vec::new();
+    let (mut loaded_rule_jsons, mut rule_errors) = match &config.rule_packs_dir {
+        // Encrypted packs (ADR-0037): packs that cannot be opened are
+        // reported with the invalid rule files, the others still load;
+        // packs for another key are kept apart (`skipped_rule_packs`).
+        Some(packs_dir) => {
+            let client_key = config.client_key.as_ref().map(|k| &k.key);
+            let catalog = crate::rules::catalog::load_catalog(packs_dir, client_key);
+            let (rules, mut errors) = crate::rules::catalog::compile_loaded_catalog(&catalog);
+            skipped_rule_packs = catalog.foreign_packs;
+            let mut pack_errors = catalog.errors;
+            pack_errors.append(&mut errors);
+            (rules, pack_errors)
+        }
+        None => load_rules(&config.rules_dir),
     };
     // Custom rules (ticket #84/spec #82): additive, NEVER when
     // `--rules <DIR>` is explicit (implicit ADR of this ticket — an
     // isolated test catalog must never see custom rules mixed in
     // without asking for it).
-    if config.use_embedded_rules
+    if config.rule_packs_dir.is_some()
         && let Some(custom_dir) = &config.custom_rules_dir
         && custom_dir.is_dir()
     {
-        let (custom_rules, mut custom_errors) = load_rules(custom_dir);
+        let (mut custom_rules, mut custom_errors) = load_rules(custom_dir);
+        // The client's own rules, like an unsigned client pack (#143).
+        for rule in &mut custom_rules {
+            if let Some(obj) = rule.as_object_mut() {
+                obj.insert("origin".to_string(), "client".into());
+            }
+        }
         loaded_rule_jsons.extend(custom_rules);
         rule_errors.append(&mut custom_errors);
     }
@@ -1193,7 +1231,7 @@ pub fn run_scan(config: &ScanConfig) -> ScanReport {
     // `rule_updates_dir` field and `rule_packs.rs` for the verification
     // itself (silent safe fallback if no publisher public key was
     // injected at build time).
-    if config.use_embedded_rules
+    if config.rule_packs_dir.is_some()
         && let Some(updates_dir) = &config.rule_updates_dir
         && updates_dir.is_dir()
     {
@@ -2206,6 +2244,7 @@ pub fn run_scan(config: &ScanConfig) -> ScanReport {
         files_scanned: parsed_files.len(),
         total_loc,
         rule_errors,
+        skipped_rule_packs,
         rule_catalog,
         test_results,
         dependency_stats,
@@ -2734,7 +2773,7 @@ mod tests {
 
         let config = ScanConfig {
             root: root.clone(),
-            use_embedded_rules: true,
+            rule_packs_dir: Some(crate::rules::catalog::test_packs_dir()),
             custom_rules_dir: Some(custom_dir),
             ..ScanConfig::default()
         };
@@ -2838,7 +2877,7 @@ mod tests {
         );
         let config = ScanConfig {
             root: root.clone(),
-            use_embedded_rules: true,
+            rule_packs_dir: Some(crate::rules::catalog::test_packs_dir()),
             ..ScanConfig::default()
         };
         let report = run_scan(&config);
@@ -2869,7 +2908,7 @@ mod tests {
         );
         let config = ScanConfig {
             root: root.clone(),
-            use_embedded_rules: true,
+            rule_packs_dir: Some(crate::rules::catalog::test_packs_dir()),
             ..ScanConfig::default()
         };
         let report = run_scan(&config);
@@ -2890,7 +2929,7 @@ mod tests {
 
     #[test]
     fn test_custom_rules_dir_ignored_when_rules_dir_explicit() {
-        // `--rules <DIR>` (use_embedded_rules: false): custom_rules_dir
+        // `--rules <DIR>` (rule_packs_dir: None): custom_rules_dir
         // must NEVER be consulted, even if it is set.
         let root = temp_dir();
         let rules_dir = root.join("rules");
@@ -2950,14 +2989,14 @@ mod tests {
 
         let config = ScanConfig {
             root: root.clone(),
-            use_embedded_rules: true,
+            rule_packs_dir: Some(crate::rules::catalog::test_packs_dir()),
             rule_updates_dir: Some(updates_dir),
             ..ScanConfig::default()
         };
         let report = run_scan(&config);
         assert!(
             report.findings.iter().all(|f| f.rule_key != "pack_rule"),
-            "aucune clé publique éditeur injectée en test — le pack ne doit jamais être consulté"
+            "a pack whose signature does not verify must never be loaded"
         );
         std::fs::remove_dir_all(&root).ok();
     }
@@ -2982,7 +3021,7 @@ mod tests {
             rule_updates_dir: Some(updates_dir),
             ..ScanConfig::default()
         };
-        // `use_embedded_rules: false` (default) — must never attempt to
+        // `rule_packs_dir: None` (default) — must never attempt to
         // read `rules-updates/`, so must never fail even with an
         // incomplete manifest (no "signature" field here).
         let report = run_scan(&config);
@@ -3134,6 +3173,33 @@ mod tests {
         );
 
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// ADR-0037: a rule's `"origin"` decides the finding's `rule_source`.
+    #[test]
+    fn test_rule_source_of_maps_origins() {
+        let of = |origin: Option<&str>| {
+            let mut rule = serde_json::json!({"id": "r"});
+            if let Some(o) = origin {
+                rule["origin"] = o.into();
+            }
+            rule_source_of(&rule)
+        };
+        let mapped = [
+            of(Some("client")),
+            of(Some("official")),
+            of(Some("builtin")),
+            of(None),
+        ];
+        assert_eq!(
+            mapped,
+            [
+                "json_custom",
+                "json_official",
+                "json_builtin",
+                "json_builtin"
+            ]
+        );
     }
 
     /// Ticket #139: a group with several kinds shows the split, largest

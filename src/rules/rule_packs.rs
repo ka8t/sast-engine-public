@@ -42,13 +42,18 @@ use sha2::{Digest, Sha256};
 // file-level docstring above and `build.rs`.
 include!(concat!(env!("OUT_DIR"), "/editor_release_data.rs"));
 
-/// Hardcoded fallback — empty. Never filled in manually: only build-time
-/// injection
-/// (`INJECTED_EDITOR_PUBLIC_KEY_HEX`) should carry a real value.
-const EDITOR_ED25519_PUBLIC_KEY_HEX: &str = "";
+/// CodeFixture public key (Ed25519), written in the source since
+/// 2026-11-09 (ADR-0037, ticket #144): the shared repository is built by
+/// clients themselves, without `SAST_EDITOR_PUBLIC_KEY_HEX`, and every
+/// build must still check official rule packs. A public key is not a
+/// secret. The matching private key lives in the `tools/sast-keys`
+/// registry (`sast-keys public-key` prints this value). A build-time
+/// injection still takes precedence.
+const EDITOR_ED25519_PUBLIC_KEY_HEX: &str =
+    "40d0a67f07af34aa60e8ed8252925bf8dd581b1d38d5a6d5506cbf7fbbd0d917";
 
 /// Publisher public key actually used — injected value if present,
-/// otherwise the (empty) fallback. Delegates to
+/// otherwise the CodeFixture key written above. Delegates to
 /// `effective_editor_public_key_hex_with_override` (a pure, testable
 /// function).
 fn effective_editor_public_key_hex() -> &'static str {
@@ -87,6 +92,48 @@ struct PackManifest {
 /// actually used by the cryptographic verification.
 pub fn load_update_packs(updates_root: &Path) -> (Vec<Value>, RuleErrors) {
     load_update_packs_with_key(updates_root, effective_editor_public_key_hex())
+}
+
+/// Verifies the Ed25519 signature of an official rule pack (ADR-0037,
+/// ticket #144) with the CodeFixture public key of this build.
+/// `message` and `signature` come from `pack_format::signed_content`.
+pub fn verify_pack_signature(message: &[u8], signature: &[u8; 64]) -> Result<(), String> {
+    verify_pack_signature_with_key(message, signature, effective_editor_public_key_hex())
+}
+
+/// Testable core of [`verify_pack_signature`]. A build without a public
+/// key cannot tell an official pack from a forged one, so it rejects
+/// every signed pack rather than trusting it.
+pub fn verify_pack_signature_with_key(
+    message: &[u8],
+    signature: &[u8; 64],
+    public_key_hex: &str,
+) -> Result<(), String> {
+    if public_key_hex.is_empty() {
+        return Err("this build has no CodeFixture public key to check signed packs".to_string());
+    }
+    let public_key_bytes: [u8; 32] = hex_decode(public_key_hex)
+        .and_then(|v| v.try_into().ok())
+        .ok_or_else(|| "malformed CodeFixture public key".to_string())?;
+    let verifying_key = VerifyingKey::from_bytes(&public_key_bytes)
+        .map_err(|_| "malformed CodeFixture public key".to_string())?;
+    verifying_key
+        .verify(message, &Signature::from_bytes(signature))
+        .map_err(|_| "signature does not match the pack content".to_string())
+}
+
+/// Builds an official rule pack: encrypted with the client key `key` and
+/// signed with the CodeFixture signing key (ADR-0037). Used by
+/// `tools/sast-keys` (ticket #145) and by the tests.
+pub fn write_official_pack(
+    name: &str,
+    files: &[crate::rules::pack_format::RuleSource],
+    key: &[u8; 32],
+    signing_key: &ed25519_dalek::SigningKey,
+) -> Vec<u8> {
+    use ed25519_dalek::Signer;
+    let sign = |bytes: &[u8]| signing_key.sign(bytes).to_bytes();
+    crate::rules::pack_format::write_pack_signed_by(name, files, key, Some(&sign))
 }
 
 /// Per-file errors — same granularity as `orchestrator::
@@ -546,13 +593,12 @@ mod tests {
         std::fs::remove_dir_all(&root).ok();
     }
 
+    /// Real entry point (`load_update_packs`, the path the binary uses):
+    /// since the CodeFixture public key is written in the source
+    /// (2026-11-09), a pack signed by any other key — here the test key —
+    /// is rejected with an explicit error, never loaded.
     #[test]
-    fn test_no_editor_public_key_configured_loads_nothing() {
-        // Safe fallback: this is the case for EVERY current
-        // `cargo test`/`cargo build` (no key injected).
-        // Goes through the real entry point (`load_update_packs`, not
-        // `..._with_key`) to prove that the fallback actually applies
-        // to the path used by the binary.
+    fn test_pack_signed_by_another_key_rejected_by_real_entry_point() {
         let root = temp_dir();
         let pack_dir = root.join("test-pack");
         build_valid_pack(&pack_dir, RULE_SOURCE);
@@ -560,10 +606,8 @@ mod tests {
         let (rules, errors) = load_update_packs(&root);
 
         assert!(rules.is_empty());
-        assert!(
-            errors.is_empty(),
-            "pas une erreur, un repli silencieux : {errors:?}"
-        );
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].1.contains("signature"), "{errors:?}");
         std::fs::remove_dir_all(&root).ok();
     }
 
@@ -602,6 +646,34 @@ mod tests {
         std::fs::remove_dir_all(&root).ok();
     }
 
+    /// Ticket #144: an official pack verifies with the matching public
+    /// key, fails with another key or when any byte changed, and is
+    /// refused by a build without a public key.
+    #[test]
+    fn test_verify_pack_signature_cases() {
+        use crate::rules::pack_format;
+        let files = [("python/r.sca".to_string(), RULE_SOURCE.to_string())];
+        let pack = write_official_pack("official", &files, &[3u8; 32], &test_signing_key());
+        let (message, signature) = pack_format::signed_content(&pack)
+            .unwrap()
+            .expect("official packs are signed");
+
+        let valid = verify_pack_signature_with_key(message, &signature, &test_public_key_hex());
+        assert_eq!(valid, Ok(()));
+        let mut tampered = message.to_vec();
+        tampered[20] ^= 1;
+        let altered = verify_pack_signature_with_key(&tampered, &signature, &test_public_key_hex());
+        assert!(altered.unwrap_err().contains("does not match"));
+        let other_key = SigningKey::from_bytes(&[5u8; 32])
+            .verifying_key()
+            .to_bytes();
+        let other_hex: String = other_key.iter().map(|b| format!("{b:02x}")).collect();
+        let wrong = verify_pack_signature_with_key(message, &signature, &other_hex);
+        assert!(wrong.is_err());
+        let no_key = verify_pack_signature_with_key(message, &signature, "");
+        assert!(no_key.unwrap_err().contains("no CodeFixture public key"));
+    }
+
     #[test]
     fn test_effective_editor_public_key_prefers_injected_over_hardcoded() {
         const FAKE: &str = "2222222222222222222222222222222222222222222222222222222222222222";
@@ -611,12 +683,18 @@ mod tests {
         );
     }
 
+    /// Without injection the CodeFixture key written in the source is
+    /// used, and it is a valid Ed25519 public key (a typo would make every
+    /// official pack fail to verify).
     #[test]
     fn test_effective_editor_public_key_falls_back_to_hardcoded_when_no_injection() {
-        assert_eq!(
-            effective_editor_public_key_hex_with_override(None),
-            EDITOR_ED25519_PUBLIC_KEY_HEX,
+        let effective = effective_editor_public_key_hex_with_override(None);
+        assert_eq!(effective, EDITOR_ED25519_PUBLIC_KEY_HEX);
+        let bytes: [u8; 32] = hex_decode(effective).unwrap().try_into().unwrap();
+        let key = VerifyingKey::from_bytes(&bytes);
+        assert!(
+            key.is_ok(),
+            "the CodeFixture public key is a valid Ed25519 point"
         );
-        assert!(effective_editor_public_key_hex_with_override(None).is_empty());
     }
 }

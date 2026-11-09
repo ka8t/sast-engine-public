@@ -1,17 +1,15 @@
-//! Embeds the builtin rule catalog (`rules/builtin/**/*.sca`) into the
-//! binary at compile time, so `sast-engine scan` never needs an explicit
-//! `--rules <DIR>` — mirror of `SCA_PACKAGE_DIR / "rules" / "builtin"` on
-//! the Audit side, always resolved automatically, never a CLI argument.
-//! Generates `$OUT_DIR/embedded_rules.rs`, included by
-//! `src/rules/embedded_rules.rs`.
+//! Packs the rule catalog (`rules/builtin/**/*.sca`) into
+//! `rules/builtin.scapack` next to the compiled binary (ADR-0037,
+//! ticket #141): the engine loads its rules at run time from encrypted
+//! packs, so `cargo build`/`cargo run`/the CLI tests need that pack
+//! beside `target/<profile>/sast-engine`. The pack is encrypted with the
+//! public demo key (`pack_format::demo_key`); no rule source is embedded
+//! in the binary any more (it was, encrypted, since ticket #65).
 //!
-//! **Encrypted, not plaintext** (ticket #65): the catalog is serialized
-//! into a single JSON blob, then encrypted with the "universal" key from
-//! `rules_crypto.rs` (`SALT_DEMO_UNIVERSAL` derived from
-//! `CATALOG_ROOT_SECRET`), and embedded via `include_bytes!` rather than
-//! one `include_str!` per file — running `strings` on the compiled binary
-//! no longer exposes the rule contents. Decrypted once at runtime by
-//! `embedded_rules::compile_embedded_rules`.
+//! In this repository the pack holds the full catalog, for development
+//! only. What is sold travels in packs encrypted with a per-client key
+//! (ADR-0037, `tools/sast-keys`). In the shared repository `rules/builtin`
+//! holds the demo rules only, so the same build writes the demo pack.
 //!
 //! Also generates `$OUT_DIR/editor_release_data.rs` (ticket #85/spec
 //! #82): the publisher Ed25519 public key, used by `src/rules/rule_packs.rs`
@@ -24,64 +22,51 @@
 
 use std::env;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-// `decrypt_blob` is not used by `build.rs` (decryption is a runtime
-// concern) — `#[allow(dead_code)]` on the whole
-// module rather than duplicating the attributes already set in the
-// source file itself for its own (library) context.
+// Only the encryption side is used here (decryption is a runtime
+// concern): `#[allow(dead_code)]` on both modules rather than on each item.
 #[path = "src/rules/rules_crypto.rs"]
 #[allow(dead_code)]
 mod rules_crypto;
+
+// `pack_format.rs` reaches the crypto module as `super::rules_crypto`,
+// which resolves to the module above here and to `crate::rules::
+// rules_crypto` in the library.
+#[path = "src/rules/pack_format.rs"]
+#[allow(dead_code)]
+mod pack_format;
 
 fn main() {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR absent");
     let out_dir = env::var("OUT_DIR").expect("OUT_DIR absent");
 
-    embed_builtin_rules(&manifest_dir, &out_dir);
+    write_builtin_pack(&manifest_dir, &out_dir);
     generate_editor_release_data(&out_dir);
 }
 
-fn embed_builtin_rules(manifest_dir: &str, out_dir: &str) {
+/// Writes `rules/builtin.scapack` in the directory of the compiled
+/// binary. `OUT_DIR` is `<target>/<profile>/build/<crate>-<hash>/out`, so
+/// that directory is three levels up; it follows `CARGO_TARGET_DIR` and
+/// `--target` on its own. Writing outside `OUT_DIR` is unusual for a build
+/// script, but the binary looks for its packs next to itself, exactly as
+/// it does in a client installation.
+fn write_builtin_pack(manifest_dir: &str, out_dir: &str) {
     let rules_dir = Path::new(manifest_dir).join("rules").join("builtin");
-
-    let mut entries: Vec<(String, PathBuf)> = Vec::new();
-    collect_sca_files(&rules_dir, &rules_dir, &mut entries);
-    entries.sort();
-
     println!("cargo:rerun-if-changed={}", rules_dir.display());
-    for (_, abs) in &entries {
-        println!("cargo:rerun-if-changed={}", abs.display());
+    let files = pack_format::collect_sca_sources(&rules_dir);
+    for (rel, _) in &files {
+        println!("cargo:rerun-if-changed={}", rules_dir.join(rel).display());
     }
 
-    // A single JSON blob of (relative path, content) rather than one
-    // `include_str!` per file — ticket #65: reading each file ourselves
-    // (instead of letting `include_str!` do it) is what allows the
-    // result to be encrypted before it is embedded.
-    let pairs: Vec<(String, String)> = entries
-        .iter()
-        .map(|(rel, abs)| {
-            let content = fs::read_to_string(abs)
-                .unwrap_or_else(|e| panic!("cannot read {}: {e}", abs.display()));
-            (rel.clone(), content)
-        })
-        .collect();
-    let plaintext = serde_json::to_value(&pairs).expect("JSON serialization of the catalog");
-
-    let key = rules_crypto::derive_key(
-        rules_crypto::CATALOG_ROOT_SECRET,
-        rules_crypto::SALT_DEMO_UNIVERSAL,
-        rules_crypto::DEFAULT_INFO,
-    );
-    let ciphertext = rules_crypto::encrypt_blob(&plaintext, &key);
-
-    let blob_path = Path::new(out_dir).join("embedded_rules.bin");
-    fs::write(&blob_path, &ciphertext).expect("writing the encrypted rules blob");
-
-    let code = "pub static ENCRYPTED_RULES_BLOB: &[u8] = \
-                include_bytes!(\"embedded_rules.bin\");\n";
-    let dest = Path::new(out_dir).join("embedded_rules.rs");
-    fs::write(&dest, code).expect("writing the embedded rule catalog");
+    let profile_dir = Path::new(out_dir)
+        .ancestors()
+        .nth(3)
+        .expect("OUT_DIR is <target>/<profile>/build/<crate>/out");
+    let packs_dir = profile_dir.join("rules");
+    fs::create_dir_all(&packs_dir).expect("creating the rules/ folder next to the binary");
+    let pack = pack_format::write_pack("builtin", &files, &pack_format::demo_key());
+    fs::write(packs_dir.join("builtin.scapack"), pack).expect("writing rules/builtin.scapack");
 }
 
 /// Generates `editor_release_data.rs` — see the file header docstring
@@ -115,23 +100,4 @@ fn generate_editor_release_data(out_dir: &str) {
 
     let dest = Path::new(out_dir).join("editor_release_data.rs");
     fs::write(&dest, code).expect("writing the generated publisher public key");
-}
-
-fn collect_sca_files(root: &Path, dir: &Path, out: &mut Vec<(String, PathBuf)>) {
-    let Ok(read_dir) = fs::read_dir(dir) else {
-        return;
-    };
-    for entry in read_dir.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            collect_sca_files(root, &path, out);
-        } else if path.extension().and_then(|e| e.to_str()) == Some("sca") {
-            let rel = path
-                .strip_prefix(root)
-                .expect("the file comes from root")
-                .to_string_lossy()
-                .replace('\\', "/");
-            out.push((rel, path));
-        }
-    }
 }

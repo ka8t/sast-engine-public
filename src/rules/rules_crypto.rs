@@ -67,6 +67,11 @@ pub const SALT_DEMO_UNIVERSAL: &[u8] = b"sast_engine_demo_universal_v1";
 /// Root secret for the "universal" key of the embedded rule catalog
 /// (ticket #65) — fixed, identical in every build of the binary.
 ///
+/// Since ADR-0037 (ticket #141) this is the **public demo key** on
+/// purpose: it opens the demo pack and the packs built from
+/// `rules/builtin` for development. The source is public, so it protects
+/// nothing; what is sold travels in packs encrypted with a per-client key.
+///
 /// **The threshold aimed for is precise, don't overestimate it**: this
 /// secret (and `SALT_DEMO_UNIVERSAL`/`DEFAULT_INFO` below) must be
 /// present in plaintext in the binary for runtime decryption to work
@@ -147,6 +152,50 @@ pub fn decrypt_blob(blob: &[u8], key: &[u8; 32]) -> Option<serde_json::Value> {
     let nonce = Nonce::from_slice(nonce_bytes);
     let plaintext = cipher.decrypt(nonce, ciphertext).ok()?;
     serde_json::from_slice(&plaintext).ok()
+}
+
+/// Encrypts raw bytes with ChaCha20-Poly1305, authenticating `aad`
+/// (associated data, not encrypted) along with them — used by rule packs
+/// (ADR-0037) so that their clear header cannot be altered without the
+/// decryption failing. Same layout as [`encrypt_blob`]: nonce (12 bytes)
+/// then ciphertext with its 16-byte tag.
+pub fn encrypt_bytes_with_aad(plaintext: &[u8], aad: &[u8], key: &[u8; 32]) -> Vec<u8> {
+    use chacha20poly1305::aead::Payload;
+    let cipher = ChaCha20Poly1305::new(Key::from_slice(key));
+    let nonce = ChaCha20Poly1305::generate_nonce(&mut OsRng);
+    let ciphertext = cipher
+        .encrypt(
+            &nonce,
+            Payload {
+                msg: plaintext,
+                aad,
+            },
+        )
+        .expect("chiffrement ChaCha20-Poly1305 (n'échoue jamais en pratique)");
+    let mut out = Vec::with_capacity(12 + ciphertext.len());
+    out.extend_from_slice(&nonce);
+    out.extend_from_slice(&ciphertext);
+    out
+}
+
+/// Reverse of [`encrypt_bytes_with_aad`]. `None` if the blob is too
+/// short, the key is wrong, or the blob or `aad` was altered.
+pub fn decrypt_bytes_with_aad(blob: &[u8], aad: &[u8], key: &[u8; 32]) -> Option<Vec<u8>> {
+    use chacha20poly1305::aead::Payload;
+    if blob.len() < 12 + 16 {
+        return None;
+    }
+    let (nonce_bytes, ciphertext) = blob.split_at(12);
+    let cipher = ChaCha20Poly1305::new(Key::from_slice(key));
+    cipher
+        .decrypt(
+            Nonce::from_slice(nonce_bytes),
+            Payload {
+                msg: ciphertext,
+                aad,
+            },
+        )
+        .ok()
 }
 
 // ============================================================================

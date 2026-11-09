@@ -22,6 +22,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
+use crate::scan::discovery::{WalkEntry, classify_entry};
 use crate::scan::orchestrator::SourceLanguage;
 
 /// Directories never relevant for detection — exact mirror of
@@ -107,7 +108,14 @@ fn walk_detect(
     for entry in entries.flatten() {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().into_owned();
-        if path.is_dir() {
+        // Links to directories are not followed, like the scan walk
+        // (`discovery::classify_entry`): a link to a parent folder would
+        // otherwise recurse forever.
+        let kind = classify_entry(&entry);
+        if kind == WalkEntry::Skip {
+            continue;
+        }
+        if kind == WalkEntry::Dir {
             if EXCLUDED_DIRS.contains(&name.as_str())
                 || ENGINE_OUTPUT_DIRS.contains(&name.as_str())
                 || name.starts_with('.')
@@ -398,6 +406,34 @@ mod tests {
         let path = root.join(rel);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, content).unwrap();
+    }
+
+    /// A link to a parent folder no longer recurses forever, and a link to
+    /// another folder adds no top-level directory of its own.
+    #[cfg(unix)]
+    #[test]
+    fn test_walk_detect_skips_directory_links() {
+        let dir = std::env::temp_dir().join(format!("sast-pc-links-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        write_file(&dir, "web/app.js", "let x = 1;\n");
+        std::fs::create_dir_all(dir.join("mirror")).unwrap();
+        std::os::unix::fs::symlink("../web", dir.join("mirror/web_link")).unwrap();
+        std::os::unix::fs::symlink("..", dir.join("web/loop")).unwrap();
+
+        let mut languages = BTreeSet::new();
+        let mut top_level_dirs = BTreeSet::new();
+        let mut has_root_level_files = false;
+        walk_detect(
+            &dir,
+            &dir,
+            &mut languages,
+            &mut top_level_dirs,
+            &mut has_root_level_files,
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+
+        assert_eq!(top_level_dirs.into_iter().collect::<Vec<_>>(), ["web"]);
+        assert!(!has_root_level_files);
     }
 
     #[test]

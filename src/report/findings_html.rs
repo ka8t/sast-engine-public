@@ -268,6 +268,12 @@ fn render_finding_item(f: &ReportFinding, severity: &str, report_locale: &Value)
                 r#" <span class="finding-badge finding-badge-custom" title="{label}">📜 {label}</span>"#
             ));
         }
+        "json_official" => {
+            let label = t(report_locale, "taint_badge_official");
+            badges_html.push_str(&format!(
+                r#" <span class="finding-badge finding-badge-builtin" title="{label}">✅ {label}</span>"#
+            ));
+        }
         "json_builtin" => {
             let label = t(report_locale, "taint_badge_builtin");
             badges_html.push_str(&format!(
@@ -503,6 +509,24 @@ mod tests {
             committer: None,
             rule_source: "json_builtin".to_string(),
         }
+    }
+
+    /// ADR-0037 (#143/#144): each rule origin gets its own badge —
+    /// official CodeFixture pack, client rule, builtin catalog.
+    #[test]
+    fn test_render_finding_item_badge_per_rule_source() {
+        let en = load_report_locale("en");
+        let render = |source: &str| {
+            let mut f = finding("SECURITY", "r", "R", "app.py");
+            f.rule_source = source.to_string();
+            render_finding_item(&f, "HIGH", &en)
+        };
+        let official = render("json_official");
+        let client = render("json_custom");
+        let builtin = render("json_builtin");
+        assert!(official.contains("✅ Official"), "{official}");
+        assert!(client.contains("finding-badge-custom"), "{client}");
+        assert!(builtin.contains("🛡️ Builtin") && !builtin.contains("Official"));
     }
 
     #[test]

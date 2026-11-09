@@ -788,7 +788,7 @@ mod tests {
     #[test]
     fn test_iso27001_mapping_no_new_drift_against_compiled_catalog() {
         let m = load_iso27001_mapping();
-        let compiled_ids = crate::rules::embedded_rules::compiled_rule_ids();
+        let compiled_ids = crate::rules::catalog::compiled_rule_ids();
         let drifted = drifted_mapping_ids(m.mapping.keys(), &compiled_ids);
         let known: std::collections::BTreeSet<&str> =
             ISO27001_KNOWN_PHANTOM_IDS.iter().copied().collect();
@@ -856,7 +856,7 @@ mod tests {
     #[test]
     fn test_asvs_mapping_no_new_drift_against_compiled_catalog() {
         let m = load_asvs_mapping();
-        let compiled_ids = crate::rules::embedded_rules::compiled_rule_ids();
+        let compiled_ids = crate::rules::catalog::compiled_rule_ids();
         let drifted = drifted_mapping_ids(m.mapping.keys(), &compiled_ids);
         let known: std::collections::BTreeSet<&str> =
             ASVS_KNOWN_PHANTOM_IDS.iter().copied().collect();
@@ -926,7 +926,7 @@ mod tests {
     #[test]
     fn test_nist_csf_mapping_no_new_drift_against_compiled_catalog() {
         let m = load_nist_csf_mapping();
-        let compiled_ids = crate::rules::embedded_rules::compiled_rule_ids();
+        let compiled_ids = crate::rules::catalog::compiled_rule_ids();
         let drifted = drifted_mapping_ids(m.mapping.keys(), &compiled_ids);
         let known: std::collections::BTreeSet<&str> =
             NIST_CSF_KNOWN_PHANTOM_IDS.iter().copied().collect();

@@ -228,6 +228,47 @@ fn consider_file(
     }
 }
 
+/// What the walk does with a directory entry.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum WalkEntry {
+    /// A real directory: the walk descends into it.
+    Dir,
+    /// A file, or a symbolic link to a file: considered for the scan.
+    File,
+    /// A symbolic link to a directory (or a broken link to nothing):
+    /// skipped, never descended into.
+    Skip,
+}
+
+/// Classifies a directory entry without following a symbolic link to a
+/// directory — mirror of Python `os.walk` (`followlinks=False` by default,
+/// which `Audit/sca/runner.py::_find_files` relies on) and of a plain
+/// `find .`.
+///
+/// Bug reported by a tester (2026-11-09): `Path::is_dir` follows links,
+/// so a link pointing at another folder of the project made the walk read
+/// that folder twice — the scan announced 351 HTML-family files where
+/// `find` counted 317 — and a link to a parent folder recursed until the
+/// path grew too long. A link to a file stays a file, as for `os.walk`
+/// (it lands in `filenames`) and `find -name`.
+pub(crate) fn classify_entry(entry: &std::fs::DirEntry) -> WalkEntry {
+    let Ok(file_type) = entry.file_type() else {
+        return WalkEntry::Skip;
+    };
+    if file_type.is_dir() {
+        return WalkEntry::Dir;
+    }
+    if file_type.is_symlink() {
+        // `metadata` follows the link: a directory target is skipped, a
+        // missing one (broken link) has nothing to read either.
+        return match std::fs::metadata(entry.path()) {
+            Ok(target) if target.is_file() => WalkEntry::File,
+            _ => WalkEntry::Skip,
+        };
+    }
+    WalkEntry::File
+}
+
 fn walk_dir(
     dir: &Path,
     root: &Path,
@@ -241,11 +282,10 @@ fn walk_dir(
     let mut subdirs = Vec::new();
     let mut filepaths = Vec::new();
     for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            subdirs.push(path);
-        } else {
-            filepaths.push(path);
+        match classify_entry(&entry) {
+            WalkEntry::Dir => subdirs.push(entry.path()),
+            WalkEntry::File => filepaths.push(entry.path()),
+            WalkEntry::Skip => {}
         }
     }
 
@@ -500,6 +540,58 @@ mod tests {
             vec![root.join("a.py"), root.join("b.py"), root.join("sub/c.py")]
         );
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// Tester report (2026-11-09): a link to another project folder made
+    /// its files count twice, and a link to a parent folder looped. The
+    /// walk now skips links to directories (like `os.walk` and `find .`)
+    /// and keeps links to files.
+    #[cfg(unix)]
+    #[test]
+    fn test_find_files_does_not_follow_directory_links() {
+        let root = temp_project_dir();
+        write_file(&root, "site/pages/p1.py", "x\n");
+        write_file(&root, "site/pages/p2.py", "x\n");
+        write_file(&root, "shared/s.py", "x\n");
+        std::os::unix::fs::symlink("../site/pages", root.join("shared/pages_link")).unwrap();
+        std::os::unix::fs::symlink("..", root.join("shared/loop")).unwrap();
+        std::os::unix::fs::symlink("s.py", root.join("shared/alias.py")).unwrap();
+        std::os::unix::fs::symlink("missing", root.join("shared/broken.py")).unwrap();
+
+        let files = find_files(&root, &[Path::new(".")], &default_config());
+        std::fs::remove_dir_all(&root).ok();
+
+        let rel: Vec<String> = files
+            .iter()
+            .map(|f| {
+                f.strip_prefix(&root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+        assert_eq!(
+            rel,
+            vec![
+                "shared/alias.py",
+                "shared/s.py",
+                "site/pages/p1.py",
+                "site/pages/p2.py"
+            ]
+        );
+    }
+
+    /// An include start path that is itself a link to a directory is
+    /// still walked: `os.walk(top)` follows `top`, and the user named it.
+    #[cfg(unix)]
+    #[test]
+    fn test_find_files_start_path_link_is_walked() {
+        let root = temp_project_dir();
+        write_file(&root, "real/a.py", "x\n");
+        std::os::unix::fs::symlink("real", root.join("alias")).unwrap();
+        let files = find_files(&root, &[Path::new("alias")], &default_config());
+        std::fs::remove_dir_all(&root).ok();
+        assert_eq!(files, vec![root.join("alias/a.py")]);
     }
 
     #[test]
