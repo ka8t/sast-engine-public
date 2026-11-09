@@ -1001,6 +1001,63 @@ fn files_per_language(parsed_files: &[ParsedFile]) -> BTreeMap<&'static str, usi
     counts
 }
 
+/// Kind of file shown in the phase A split (ticket #139): the extension
+/// as written on disk, or the file name for formats recognized by name
+/// (`Dockerfile`, `Dockerfile.dev`), whose "extension" would be
+/// meaningless (`dev`).
+fn file_kind(pf: &ParsedFile) -> String {
+    let by_name = || {
+        pf.filepath
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    };
+    if pf.language == SourceLanguage::Dockerfile {
+        return by_name();
+    }
+    pf.filepath
+        .extension()
+        .map(|e| e.to_string_lossy().into_owned())
+        .unwrap_or_else(by_name)
+}
+
+/// Builds the per-language part of the phase A label from
+/// `(language tag, file kind)` pairs, one per parsed file.
+///
+/// A language group can hold several extensions (`html` covers `jsp`,
+/// `vue`, `erb`…, `javascript` covers `ts`/`tsx`…): a user who counted
+/// only `.html` files from the shell read `html: 351` as a sign that
+/// excluded folders were scanned (ticket #139). So a group with more
+/// than one kind shows the split, largest first (ties alphabetical):
+/// `html: 351 (html 317, jsp 34)`. A single-kind group keeps the plain
+/// `java: 3460` form. Languages stay in alphabetical order, as in
+/// [`files_per_language`].
+fn phase_a_language_summary(files: impl IntoIterator<Item = (&'static str, String)>) -> String {
+    let mut groups: BTreeMap<&'static str, BTreeMap<String, usize>> = BTreeMap::new();
+    for (lang, kind) in files {
+        *groups.entry(lang).or_default().entry(kind).or_insert(0) += 1;
+    }
+    groups
+        .into_iter()
+        .map(|(lang, kinds)| {
+            let total: usize = kinds.values().sum();
+            if kinds.len() < 2 {
+                return format!("{lang}: {total}");
+            }
+            let mut split: Vec<(String, usize)> = kinds.into_iter().collect();
+            // Stable sort on a BTreeMap's alphabetical order: ties stay alphabetical.
+            split.sort_by(|a, b| b.1.cmp(&a.1));
+            let detail = split
+                .iter()
+                .map(|(kind, n)| format!("{kind} {n}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{lang}: {total} ({detail})")
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 /// Runs a full scan on `config.root`.
 ///
 /// Three phases:
@@ -1275,14 +1332,15 @@ pub fn run_scan(config: &ScanConfig) -> ScanReport {
         parsed_files.push(parsed_file);
     }
 
-    // Per-language count (ticket #46) — computed here, not in a
-    // separate pass: `parsed_files` already knows each file's language
+    // Per-language count (ticket #46), split by extension when a group
+    // holds several (ticket #139) — computed here, not in a separate
+    // pass: `parsed_files` already knows each file's language
     // (`ParsedFile::language`), phase A has just grouped them.
-    let language_summary = files_per_language(&parsed_files)
-        .iter()
-        .map(|(lang, count)| format!("{lang}: {count}"))
-        .collect::<Vec<_>>()
-        .join(", ");
+    let language_summary = phase_a_language_summary(
+        parsed_files
+            .iter()
+            .map(|pf| (pf.language.rule_tag(), file_kind(pf))),
+    );
     record_phase(
         &format!(
             "{} — {language_summary}",
@@ -3073,6 +3131,82 @@ mod tests {
             labels_with_deps[4].starts_with("[5/5] dépendances"),
             "{:?}",
             labels_with_deps[4]
+        );
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// Ticket #139: a group with several kinds shows the split, largest
+    /// first and ties alphabetical; a single-kind group keeps `lang: N`.
+    #[test]
+    fn test_phase_a_language_summary_splits_multi_extension_groups() {
+        let files = vec![
+            ("java", "java".to_string()),
+            ("java", "java".to_string()),
+            ("html", "jsp".to_string()),
+            ("html", "html".to_string()),
+            ("html", "html".to_string()),
+            ("html", "vue".to_string()),
+            ("javascript", "ts".to_string()),
+        ];
+        let summary = phase_a_language_summary(files);
+        assert_eq!(
+            summary,
+            "html: 4 (html 2, jsp 1, vue 1), java: 2, javascript: 1"
+        );
+
+        let empty = phase_a_language_summary(Vec::new());
+        assert_eq!(empty, "");
+    }
+
+    /// Ticket #139: the kind is the extension, or the file name for a
+    /// Dockerfile (`Dockerfile.dev` must not show as `dev`); end to end,
+    /// `.html` + `.jsp` files show `html: 3 (html 2, jsp 1)`.
+    #[test]
+    fn test_phase_a_label_splits_html_templates_and_names_dockerfiles() {
+        use std::sync::Mutex;
+        static CAPTURED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+        fn capture(label: &str, _elapsed: std::time::Duration) {
+            CAPTURED.lock().unwrap().push(label.to_string());
+        }
+
+        let root = temp_dir();
+        let rules_dir = root.join("rules");
+        std::fs::create_dir_all(&rules_dir).unwrap();
+        write_two_category_rules(&rules_dir);
+        write(&root, "a.html", "<p>a</p>\n");
+        write(&root, "b.html", "<p>b</p>\n");
+        write(&root, "c.jsp", "<p>c</p>\n");
+        write(&root, "Main.java", "class Main {}\n");
+        write(&root, "Dockerfile", "FROM alpine\n");
+        write(&root, "Dockerfile.dev", "FROM alpine\n");
+
+        CAPTURED.lock().unwrap().clear();
+        let config = ScanConfig {
+            root: root.clone(),
+            rules_dir,
+            on_phase_complete: Some(capture),
+            ..ScanConfig::default()
+        };
+        run_scan(&config);
+        let labels = CAPTURED.lock().unwrap().clone();
+        let phase_a_label = labels
+            .iter()
+            .find(|l| l.contains("phase A"))
+            .unwrap_or_else(|| panic!("no phase A label among {labels:?}"))
+            .clone();
+
+        let html_split = phase_a_label.contains("html: 3 (html 2, jsp 1)");
+        assert!(html_split, "html split expected: {phase_a_label:?}");
+        let docker_split = phase_a_label.contains("dockerfile: 2 (Dockerfile 1, Dockerfile.dev 1)");
+        assert!(
+            docker_split,
+            "Dockerfile kinds by name expected: {phase_a_label:?}"
+        );
+        let java_plain = phase_a_label.contains("java: 1,") || phase_a_label.ends_with("java: 1");
+        assert!(
+            java_plain,
+            "single-kind group keeps the plain form: {phase_a_label:?}"
         );
 
         std::fs::remove_dir_all(&root).ok();
