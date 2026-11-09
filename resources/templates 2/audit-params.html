@@ -1,0 +1,62 @@
+<div class="audit-params" id="section-params" data-nav-section="{{i18n_parameters}}">
+    <h3>📋 {{i18n_project_info}}</h3>
+    <div class="params-grid">
+        <div class="param-item">
+            <span class="param-label">{{i18n_project_name}}</span>
+            <span class="param-value"><strong>{{project_name}}</strong> {{project_version}}</span>
+        </div>
+        <div class="param-item param-full">
+            <span class="param-label">{{i18n_project_description}}</span>
+            <span class="param-value">{{project_description}}</span>
+        </div>
+        <div class="param-item">
+            <span class="param-label">{{i18n_project_id}}</span>
+            <span class="param-value"><code>{{project_id}}</code></span>
+        </div>
+        <div class="param-item">
+            <span class="param-label">{{i18n_project_path}}</span>
+            <span class="param-value"><code>{{project_path}}</code></span>
+        </div>
+    </div>
+
+    <h3>📋 {{i18n_audit_scope}}</h3>
+    <div class="params-grid">
+        <div class="param-item">
+            <span class="param-label">{{i18n_languages}}</span>
+            <span class="param-value">{{languages}}</span>
+        </div>
+        <div class="param-item param-full">
+            <span class="param-label">{{i18n_scanned_extensions}}</span>
+            <span class="param-value">{{scanned_extensions}}</span>
+        </div>
+        <div class="param-item param-full">
+            <span class="param-label">{{i18n_analyzed_dirs}}</span>
+            <span class="param-value">{{include_paths}}</span>
+        </div>
+        <div class="param-item param-full">
+            <span class="param-label">{{i18n_excluded_patterns}}</span>
+            <span class="param-value">{{exclude_patterns}}</span>
+        </div>
+        <div class="param-item">
+            <span class="param-label">{{i18n_mode}}</span>
+            <span class="param-value"><strong>{{mode}}</strong></span>
+        </div>
+        <div class="param-item">
+            <span class="param-label">{{i18n_filtered_category}}</span>
+            <span class="param-value">{{only_category}}</span>
+        </div>
+        <div class="param-item">
+            <span class="param-label">{{i18n_disabled_rules}}</span>
+            <span class="param-value">{{disabled_rules}}</span>
+        </div>
+        <div class="param-item param-full">
+            <span class="param-label">{{i18n_categories}}</span>
+            <span class="param-value">{{categories}}</span>
+        </div>
+    </div>
+
+    <h3 id="section-cli-options">⚙️ {{i18n_cli_options}}</h3>
+    <div class="options-checklist">
+        {{cli_options_html}}
+    </div>
+</div>

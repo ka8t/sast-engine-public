@@ -36,7 +36,9 @@ cargo build --release
 
 ## Part C: results
 
-Every scan writes into the scanned folder, under `docs/audit-reports/`. The terminal prints the report path on the `Report generated` line: open that file in a browser. Do not commit `docs/audit-reports/`, because it contains the scan results.
+Every scan writes into the scanned folder, under `audit-reports/`. The terminal prints the report path on the `Report generated` line: open that file in a browser. Do not commit `audit-reports/`, because it contains the scan results. Scans never read this folder back as source code.
+
+Versions before November 2026 wrote to `docs/audit-reports/`. The first scan after the upgrade still compares with the last export found there, then writes only to `audit-reports/`. You can delete the old folder afterwards.
 
 ## Installing the full rule catalog
 

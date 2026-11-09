@@ -26,14 +26,22 @@ use sast_engine::report::html::{ReportContext, generate_html};
 use sast_engine::rules::rule_wizard::{WizardPaths, run_wizard};
 use sast_engine::scan::orchestrator::{ScanConfig, ScanReport, run_scan};
 
-/// Exclusions applied by default to every scan — exact mirror of
-/// `DEFAULT_CONFIG["paths"]["exclude"]` (`Audit/sca/config.py`), which
-/// applies systematically on the Python side (merged with
-/// `audit.config.json` if it exists, never absent). `--exclude`
-/// ADDS to this list rather than replacing it: these are security
-/// exclusions (never scan third-party/vendored code), not a project
-/// choice to override. Deviation found by the maintainer (2026-08-26): a scan
-/// of `Audit` (repo root, with `.venv/` + `videos/node_modules/` +
+/// Exclusions applied to every scan — same list as
+/// `DEFAULT_CONFIG["paths"]["exclude"]` (`Audit/sca/config.py`).
+/// `paths.exclude` (`audit.config.json`) and `--exclude` ADD to this
+/// list, never replace it: these are security exclusions (never scan
+/// third-party/vendored code, nor the engine's own reports), not a
+/// project choice to override.
+///
+/// **Deliberate deviation from Python (ticket #132, 2026-11-09)**:
+/// `sca/config.py::_merge_config` replaces lists, so a project
+/// declaring its own `paths.exclude` silently lost these defaults —
+/// and scanned its previous HTML reports (279 phantom findings on a
+/// 4-line project). The Rust port had copied that replacement while
+/// this comment claimed a merge.
+///
+/// Earlier deviation found by the maintainer (2026-08-26): a scan of `Audit`
+/// (repo root, with `.venv/` + `videos/node_modules/` +
 /// `videos/.piper-venv/` present) without an explicit `--exclude`
 /// scanned tens of thousands of third-party files (numpy/transformers/
 /// pytest...) — nothing to do with engine slowness, just the total
@@ -48,11 +56,67 @@ const DEFAULT_EXCLUDES: &[&str] = &[
     "audit-datas/",
 ];
 
+/// Default report directory, relative to the scanned folder (ticket
+/// #133, 2026-11-09). **Deliberate deviation from Python**, which writes
+/// into `<project>/docs/audit-reports`: that silently added files to the
+/// audited project's own `docs/` folder. See
+/// `docs/adr/0036-reports-written-to-project-root-audit-reports.md`.
+const REPORTS_DIR: &str = "audit-reports";
+
+/// Default JSON history directory (exports, SBOM), inside
+/// [`REPORTS_DIR`] — same nesting as before ticket #133.
+const DATAS_DIR: &str = "audit-reports/audit-datas";
+
+/// History directory used before ticket #133. Read only, as a
+/// fallback when [`DATAS_DIR`] holds no baseline yet, so the first scan
+/// after the upgrade still compares against the previous one. Nothing
+/// is ever written there any more.
+const LEGACY_DATAS_DIR: &str = "docs/audit-reports/audit-datas";
+
+/// Path of `target` relative to `root`, with `/` separators, when
+/// `target` lies strictly inside `root` — `None` otherwise (outside the
+/// project, or the project root itself). Both sides are canonicalized
+/// (`target` through its parent when it does not exist yet, like a
+/// report about to be written), so `.`, relative paths and symlinks
+/// such as macOS `/tmp` → `/private/tmp` compare correctly.
+fn path_inside_root(root: &Path, target: &Path) -> Option<String> {
+    let root = root.canonicalize().ok()?;
+    let target = match target.canonicalize() {
+        Ok(t) => t,
+        Err(_) => {
+            let parent = target.parent().filter(|p| !p.as_os_str().is_empty());
+            let parent = parent.unwrap_or(Path::new(".")).canonicalize().ok()?;
+            parent.join(target.file_name()?)
+        }
+    };
+    let rel = target.strip_prefix(&root).ok()?;
+    let rel = rel.to_string_lossy().replace('\\', "/");
+    (!rel.is_empty()).then_some(rel)
+}
+
+/// Exclusion patterns for the engine's own outputs located inside the
+/// scanned folder (ticket #132): the history directory and the report
+/// file, wherever `--data-dir`/`--output` put them. `DEFAULT_EXCLUDES`
+/// already covers the default locations (`audit-reports/`,
+/// `audit-datas/`); this covers moved ones, so a scan never reads its
+/// previous reports back as source code (an HTML report is a scanned
+/// language).
+fn output_excludes(root: &Path, data_dir: Option<&Path>, output: Option<&Path>) -> Vec<String> {
+    [data_dir, output]
+        .into_iter()
+        .flatten()
+        .filter_map(|p| path_inside_root(root, p))
+        .collect()
+}
+
 /// Resolves `paths.include`/`paths.exclude` for a scan.
 ///
-/// 1. `audit.config.json` exists at the project root: read as-is
+/// 1. `audit.config.json` exists at the project root: read
 ///    (`project_config::read_paths_config`) — mirror of
-///    `sca/config.py::load_config`.
+///    `sca/config.py::load_config`. A file without a `paths` section is
+///    still a present file (default paths, no prompt). A present but
+///    invalid file is reported and the defaults are used, never the
+///    prompt (ticket #137: the prompt overwrote it).
 /// 2. Absent: **proposed** interactively (automatic detection +
 ///    prompt), an accepted deviation from Python (which auto-generates
 ///    it silently, `sca/cli.py:1108-1111`) — confirmed with the maintainer
@@ -60,8 +124,10 @@ const DEFAULT_EXCLUDES: &[&str] = &[
 ///    terminal and `!quiet` (otherwise a CI/script would hang
 ///    indefinitely on a prompt that will never arrive).
 /// 3. Neither a file nor an accepted prompt: the whole directory
-///    (`["."]`) + only the default security exclusions
-///    (`DEFAULT_EXCLUDES`).
+///    (`["."]`).
+///
+/// In every case the returned exclusions start with `DEFAULT_EXCLUDES`
+/// (see its doc comment); the project's own patterns follow.
 fn resolve_project_paths(
     root: &Path,
     quiet: bool,
@@ -70,21 +136,31 @@ fn resolve_project_paths(
     // Prompt messages in the `--lang` language (ticket #124 — they were
     // hard-coded in French).
     let say = |key: &str| sast_engine::i18n::t(script_locale, key);
-    let default_excludes: Vec<String> = DEFAULT_EXCLUDES.iter().map(|s| s.to_string()).collect();
 
-    if let Some((include, exclude)) = sast_engine::project::project_config::read_paths_config(root)
-    {
-        let include = if include.is_empty() {
-            vec![".".to_string()]
-        } else {
-            include
-        };
-        let exclude = if exclude.is_empty() {
-            default_excludes
-        } else {
-            exclude
-        };
-        return (include, exclude);
+    match sast_engine::project::project_config::load_config_json(root) {
+        Ok(Some(_)) => {
+            let (include, exclude) =
+                sast_engine::project::project_config::read_paths_config(root).unwrap_or_default();
+            let include = if include.is_empty() {
+                vec![".".to_string()]
+            } else {
+                include
+            };
+            return (include, with_default_excludes(exclude));
+        }
+        Err(error) => {
+            emit_warning(&format!(
+                "[sast-engine] {}",
+                say("config_invalid")
+                    .replace(
+                        "{path}",
+                        &root.join("audit.config.json").display().to_string()
+                    )
+                    .replace("{error}", &error)
+            ));
+            return (vec![".".to_string()], with_default_excludes(Vec::new()));
+        }
+        Ok(None) => {}
     }
 
     // Never with `--log-format json` (ticket #92): an interactive
@@ -131,7 +207,10 @@ fn resolve_project_paths(
                         say("config_prompt_write_error").replace("{error}", &e.to_string())
                     ),
                 }
-                return (info.include_paths, info.exclude_patterns);
+                return (
+                    info.include_paths,
+                    with_default_excludes(info.exclude_patterns),
+                );
             }
             Ok(_) => {
                 eprintln!("[sast-engine] {}", say("config_prompt_declined"));
@@ -140,7 +219,32 @@ fn resolve_project_paths(
         }
     }
 
-    (vec![".".to_string()], default_excludes)
+    (vec![".".to_string()], with_default_excludes(Vec::new()))
+}
+
+/// Include paths of `audit.config.json` that do not exist under `root`,
+/// in their configured order. The walk skips them (`find_files`), so the
+/// CLI reports them once per scan instead of letting a typo scan nothing
+/// without a word (ticket #138 — Python skips them silently too).
+fn missing_include_paths(root: &Path, include_paths: &[String]) -> Vec<String> {
+    include_paths
+        .iter()
+        .filter(|p| !root.join(p).exists())
+        .cloned()
+        .collect()
+}
+
+/// `DEFAULT_EXCLUDES` followed by `project_excludes`, without
+/// duplicates (first occurrence kept) — the project's patterns can
+/// only add exclusions, never remove a default one (ticket #132).
+fn with_default_excludes(project_excludes: Vec<String>) -> Vec<String> {
+    let mut merged: Vec<String> = DEFAULT_EXCLUDES.iter().map(|s| s.to_string()).collect();
+    for pattern in project_excludes {
+        if !merged.contains(&pattern) {
+            merged.push(pattern);
+        }
+    }
+    merged
 }
 
 /// `ScanConfig::on_phase_complete` callback — displays progress LIVE,
@@ -157,7 +261,36 @@ fn print_phase_progress(label: &str, elapsed: std::time::Duration) {
             Some(serde_json::json!(elapsed.as_millis())),
         );
     } else {
-        eprintln!("[sast-engine]   {label} : {:.3}s", elapsed.as_secs_f64());
+        eprintln!("{}", phase_progress_line(label, elapsed));
+    }
+}
+
+/// Text-mode progress line of one phase, as printed by
+/// `print_phase_progress` (kept separate so its format is testable
+/// without capturing stderr).
+fn phase_progress_line(label: &str, elapsed: std::time::Duration) -> String {
+    format!("[sast-engine]   {label} : {}", format_duration(elapsed))
+}
+
+/// Human-readable duration for the console (ticket #135): `850 ms`
+/// under a second, `12.4 s` under a minute, `1 min 12 s` under an hour,
+/// `1 h 02 min` beyond. Units are the same in the four console languages
+/// (SI symbols), hence no locale lookup. JSON logs keep the raw
+/// `duration_ms`. Truncates rather than rounds at each level, so a
+/// displayed value is never larger than the real one (`59.99 s` shows
+/// `59.9 s`, not `60.0 s`).
+fn format_duration(d: std::time::Duration) -> String {
+    let ms = d.as_millis();
+    if ms < 1_000 {
+        format!("{ms} ms")
+    } else if ms < 60_000 {
+        format!("{}.{} s", ms / 1_000, (ms % 1_000) / 100)
+    } else if ms < 3_600_000 {
+        let secs = ms / 1_000;
+        format!("{} min {} s", secs / 60, secs % 60)
+    } else {
+        let mins = ms / 60_000;
+        format!("{} h {:02} min", mins / 60, mins % 60)
     }
 }
 
@@ -266,6 +399,222 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_format_duration_picks_unit_by_magnitude() {
+        use std::time::Duration;
+        let cases = [
+            (Duration::from_millis(31), "31 ms"),
+            (Duration::from_millis(999), "999 ms"),
+            (Duration::from_millis(12_480), "12.4 s"),
+            (Duration::from_millis(59_990), "59.9 s"),
+            (Duration::from_secs(72), "1 min 12 s"),
+            (Duration::from_secs(3_720), "1 h 02 min"),
+        ];
+        for (duration, expected) in cases {
+            // Called outside the macro so the code graph sees the call.
+            let formatted = format_duration(duration);
+            assert_eq!(formatted, expected);
+        }
+    }
+
+    #[test]
+    fn test_with_default_excludes_keeps_defaults_and_adds_project_patterns() {
+        let merged = with_default_excludes(vec!["legacy/".into(), "vendor/".into()]);
+        assert!(merged.iter().any(|p| p == "audit-reports/"));
+        assert_eq!(merged.iter().filter(|p| *p == "vendor/").count(), 1);
+        assert_eq!(merged.last().map(String::as_str), Some("legacy/"));
+    }
+
+    #[test]
+    fn test_missing_include_paths_keeps_only_absent_ones() {
+        let root = std::env::temp_dir().join(format!("sast_missing_inc_{}", std::process::id()));
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/a.py"), "x = 1\n").unwrap();
+        let include = ["src/", "src/a.py", "srcc/", "."].map(String::from);
+        // Called outside the macro so the code graph sees the call.
+        let missing = missing_include_paths(&root, &include);
+        assert_eq!(missing, vec!["srcc/".to_string()]);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// `run_scan_command` end to end, in-process (ticket #138): a file
+    /// include scans that file only, and a missing include does not stop
+    /// the scan.
+    #[test]
+    fn test_run_scan_command_scans_file_include_only() {
+        let root = std::env::temp_dir().join(format!("sast_run_scan_{}", std::process::id()));
+        std::fs::create_dir_all(root.join("src/app")).unwrap();
+        let tainted = "import os\nos.system(input())\n";
+        std::fs::write(root.join("src/app/a.py"), tainted).unwrap();
+        std::fs::write(root.join("src/b.py"), tainted).unwrap();
+        std::fs::write(
+            root.join("audit.config.json"),
+            r#"{"paths": {"include": ["src/app/a.py", "srcc/"], "exclude": []}}"#,
+        )
+        .unwrap();
+        let out_dir =
+            std::env::temp_dir().join(format!("sast_run_scan_out_{}", std::process::id()));
+        std::fs::create_dir_all(&out_dir).unwrap();
+        let report = out_dir.join("report.txt");
+        let metrics = out_dir.join("metrics.json");
+
+        run_scan_command(ScanArgs {
+            path: root.clone(),
+            rules: None,
+            format: "text".into(),
+            lang: "en".into(),
+            log_format: "text".into(),
+            output: Some(report.clone()),
+            suppress_file: None,
+            exclude: vec![],
+            quiet: true,
+            with_tests: false,
+            test_command: None,
+            with_deps: false,
+            db_host: None,
+            db_port: None,
+            db_name: None,
+            db_user: None,
+            db_password_env_file: None,
+            db_password_env_var: None,
+            data_dir: Some(out_dir.join("datas")),
+            quick: false,
+            only_category: None,
+            disable_rule: vec![],
+            severity: None,
+            custom_rules_dir: None,
+            rule_updates_dir: None,
+            advisories_dir: None,
+            brand_file: None,
+            sbom: false,
+            metrics_output: Some(metrics.clone()),
+        });
+        let text = std::fs::read_to_string(&report).unwrap_or_default();
+        let metrics: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&metrics).unwrap_or_default())
+                .unwrap_or_default();
+        std::fs::remove_dir_all(&root).ok();
+        std::fs::remove_dir_all(&out_dir).ok();
+
+        assert!(text.contains("a.py:"), "{text}");
+        assert!(!text.contains("b.py:"), "{text}");
+        assert!(
+            metrics.to_string().contains("\"files_scanned\":1"),
+            "{metrics}"
+        );
+    }
+
+    #[test]
+    fn test_phase_progress_line_and_print() {
+        let elapsed = std::time::Duration::from_millis(1_250);
+        let line = phase_progress_line("[2/4] phase A", elapsed);
+        assert_eq!(line, "[sast-engine]   [2/4] phase A : 1.2 s");
+        // Writes the same line to stderr; must not panic.
+        print_phase_progress("[2/4] phase A", elapsed);
+    }
+
+    #[test]
+    fn test_path_inside_root_cases() {
+        let root = std::env::temp_dir().join(format!("sast_inside_{}", std::process::id()));
+        std::fs::create_dir_all(root.join("out")).unwrap();
+        let existing = path_inside_root(&root, &root.join("out"));
+        let not_yet_written = path_inside_root(&root, &root.join("out/report.html"));
+        let root_itself = path_inside_root(&root, &root);
+        let outside = path_inside_root(&root, &std::env::temp_dir());
+        let missing_parent = path_inside_root(&root, &root.join("nope/report.html"));
+        std::fs::remove_dir_all(&root).ok();
+
+        assert_eq!(existing.as_deref(), Some("out"));
+        assert_eq!(not_yet_written.as_deref(), Some("out/report.html"));
+        assert_eq!(root_itself, None);
+        assert_eq!(outside, None);
+        assert_eq!(missing_parent, None, "parent must exist to canonicalize");
+    }
+
+    /// The non-interactive branches of `resolve_project_paths` (`quiet`
+    /// never prompts): valid file, file with an empty include, invalid
+    /// file, no file.
+    #[test]
+    fn test_resolve_project_paths_branches() {
+        let locale = sast_engine::i18n::load_script_locale("en");
+        let root = std::env::temp_dir().join(format!("sast_resolve_{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let config = root.join("audit.config.json");
+        let defaults = with_default_excludes(Vec::new());
+
+        let absent = resolve_project_paths(&root, true, &locale);
+
+        std::fs::write(
+            &config,
+            r#"{"paths": {"include": ["src/"], "exclude": ["legacy/", "vendor/"]}}"#,
+        )
+        .unwrap();
+        let valid = resolve_project_paths(&root, true, &locale);
+
+        std::fs::write(&config, r#"{"paths": {"include": []}}"#).unwrap();
+        let empty_include = resolve_project_paths(&root, true, &locale);
+
+        let invalid_text = r#"{"paths": {"include": ["src/"],}}"#;
+        std::fs::write(&config, invalid_text).unwrap();
+        let invalid = resolve_project_paths(&root, true, &locale);
+        let after_invalid = std::fs::read_to_string(&config).unwrap();
+        std::fs::remove_dir_all(&root).ok();
+
+        assert_eq!(absent, (vec![".".to_string()], defaults.clone()));
+        assert_eq!(valid.0, vec!["src/".to_string()]);
+        assert_eq!(
+            valid.1,
+            with_default_excludes(vec!["legacy/".into(), "vendor/".into()])
+        );
+        assert_eq!(empty_include.0, vec![".".to_string()]);
+        assert_eq!(empty_include.1, defaults);
+        assert_eq!(invalid, (vec![".".to_string()], defaults));
+        assert_eq!(
+            after_invalid, invalid_text,
+            "an invalid file is never rewritten"
+        );
+    }
+
+    #[test]
+    fn test_write_sbom_writes_named_cyclonedx_file() {
+        let root = std::env::temp_dir().join(format!("sast_sbom_{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("requirements.txt"), "requests==2.31.0\n").unwrap();
+        let config = ScanConfig {
+            root: root.clone(),
+            datas_dir: Some(root.join("datas")),
+            timestamp: "2026-11-09-08-00".to_string(),
+            ..ScanConfig::default()
+        };
+        let written = write_sbom(&config, "demo", &Brand::default(), &chrono::Local::now());
+        let path = written.expect("SBOM written");
+        let json = std::fs::read_to_string(&path).unwrap_or_default();
+        std::fs::remove_dir_all(&root).ok();
+
+        assert_eq!(path, root.join("datas/SCA-SBOM-2026-11-09-08-00.json"));
+        assert!(json.contains("CycloneDX"), "{json}");
+        assert!(json.contains("requests"), "{json}");
+    }
+
+    #[test]
+    fn test_output_excludes_only_paths_inside_root() {
+        let root = std::env::temp_dir().join(format!("sast_out_excl_{}", std::process::id()));
+        std::fs::create_dir_all(root.join("out/hist")).unwrap();
+        let outside = std::env::temp_dir();
+        let excludes = output_excludes(
+            &root,
+            Some(&root.join("out/hist")),
+            Some(&root.join("report.html")),
+        );
+        assert_eq!(
+            excludes,
+            vec!["out/hist".to_string(), "report.html".to_string()]
+        );
+        let outside_only = output_excludes(&root, Some(&outside), Some(&root));
+        assert!(outside_only.is_empty());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
     fn test_accepts_prompt_empty_line_accepts_default() {
         assert!(accepts_prompt("\n", "o,oui"));
         assert!(accepts_prompt("", "o,oui"));
@@ -347,8 +696,8 @@ enum Command {
         log_format: String,
         /// Output file. Absent by default with `--format html`: writes
         /// `<PREFIX>-REPORT-<timestamp>.html` (`PREFIX` from
-        /// `brand.json`, `SCA` by default) into `docs/audit-reports` of
-        /// the scanned folder (mirrors Audit's default behavior). Absent with
+        /// `brand.json`, `SCA` by default) into `audit-reports/` of
+        /// the scanned folder (Audit uses `docs/audit-reports/`). Absent with
         /// `--format text`/`sarif`: stdout.
         #[arg(long)]
         output: Option<PathBuf>,
@@ -778,7 +1127,7 @@ fn write_sbom(
     let dir = config
         .datas_dir
         .clone()
-        .unwrap_or_else(|| config.root.join("docs/audit-reports/audit-datas"));
+        .unwrap_or_else(|| config.root.join(DATAS_DIR));
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let deps = sast_engine::project::dependencies::collect_dependencies(
         &config.root,
@@ -977,12 +1326,11 @@ fn run_scan_command(args: ScanArgs) -> ExitCode {
     let timestamp = now.format("%Y-%m-%d-%H-%M").to_string();
 
     // By default (no --data-dir), the JSON export is written to
-    // `docs/audit-reports/audit-datas` — mirror of Audit's real
-    // default (`resources/templates/audit.config.template.json`, verified
-    // empirically: a project without `audit.config.json` gets this
-    // configuration generated on the first run, never
-    // `<project>/audit-datas`).
-    let data_dir = data_dir.or_else(|| Some(path.join("docs/audit-reports/audit-datas")));
+    // `audit-reports/audit-datas` (`DATAS_DIR`, ticket #133 — Audit uses
+    // `docs/audit-reports/audit-datas`). With the default only, the
+    // pre-#133 location stays readable for the baseline lookup.
+    let legacy_datas_dir = data_dir.is_none().then(|| path.join(LEGACY_DATAS_DIR));
+    let data_dir = data_dir.or_else(|| Some(path.join(DATAS_DIR)));
     if let Some(dir) = &data_dir
         && let Err(e) = std::fs::create_dir_all(dir)
     {
@@ -995,6 +1343,17 @@ fn run_scan_command(args: ScanArgs) -> ExitCode {
 
     let (include_paths, base_excludes) = resolve_project_paths(&path, quiet, &script_locale);
     let exclude_patterns: Vec<String> = base_excludes.into_iter().chain(exclude).collect();
+
+    // Ticket #138 — one grouped warning, never suppressed by `--quiet`
+    // (same treatment as the unsupported sections below).
+    let missing_includes = missing_include_paths(&path, &include_paths);
+    if !missing_includes.is_empty() {
+        emit_warning(&format!(
+            "[sast-engine] {}",
+            sast_engine::i18n::t(&script_locale, "scan_include_paths_missing")
+                .replace("{paths}", &missing_includes.join(", "))
+        ));
+    }
 
     // Ticket #43/spec #27 — a single grouped warning (not one per
     // key), never suppressed by `--quiet`: it's actionable information
@@ -1075,6 +1434,48 @@ fn run_scan_command(args: ScanArgs) -> ExitCode {
         .and_then(|p| load_brand_file(&p))
         .unwrap_or_default();
 
+    // By default (no --output), the HTML report is written to
+    // `audit-reports` (`REPORTS_DIR`) under the scanned directory — same
+    // root as the JSON export above. Resolved before the scan so the
+    // report path can be excluded from it (ticket #132). `text`/`sarif`
+    // without --output stay on stdout (explicitly requested format,
+    // Unix convention — accepted deviation vs Audit, which always writes its
+    // HTML report regardless of the format additionally requested).
+    let output = output.or_else(|| {
+        if format == "html" {
+            let dir = path.join(REPORTS_DIR);
+            if let Err(e) = std::fs::create_dir_all(&dir) {
+                emit_error(
+                    &sast_engine::i18n::t(&script_locale, "scan_internal_error")
+                        .replace("{error}", &format!("{}: {e}", dir.display())),
+                );
+                return None;
+            }
+            // Brand prefix, like `runner.py:167`
+            // (`{brand_prefix}-REPORT-{timestamp}.html`) — was hard-coded
+            // to `SCA`, so a white-label delivery still produced
+            // `SCA-REPORT-*` files (found by ticket #106).
+            Some(dir.join(format!(
+                "{}-REPORT-{timestamp}.html",
+                effective_prefix(&brand)
+            )))
+        } else {
+            None
+        }
+    });
+    if format == "html" && output.is_none() {
+        return ExitCode::from(4);
+    }
+
+    let exclude_patterns: Vec<String> = exclude_patterns
+        .into_iter()
+        .chain(output_excludes(
+            &path,
+            data_dir.as_deref(),
+            output.as_deref(),
+        ))
+        .collect();
+
     let config = ScanConfig {
         root: path,
         include_paths,
@@ -1087,6 +1488,7 @@ fn run_scan_command(args: ScanArgs) -> ExitCode {
         with_deps,
         database,
         datas_dir: data_dir,
+        legacy_datas_dir,
         timestamp: timestamp.clone(),
         quick_mode: quick,
         only_category,
@@ -1121,38 +1523,6 @@ fn run_scan_command(args: ScanArgs) -> ExitCode {
                 .replace("{path}", &rule_path.display().to_string())
                 .replace("{error}", &err.to_string()),
         );
-    }
-
-    // By default (no --output), the HTML report is written to
-    // `docs/audit-reports` under the scanned directory — same default as
-    // the JSON export above, same source of truth. `text`/`sarif`
-    // without --output stay on stdout (explicitly requested format,
-    // Unix convention — accepted deviation vs Audit, which always writes its
-    // HTML report regardless of the format additionally requested).
-    let output = output.or_else(|| {
-        if format == "html" {
-            let dir = config.root.join("docs/audit-reports");
-            if let Err(e) = std::fs::create_dir_all(&dir) {
-                emit_error(
-                    &sast_engine::i18n::t(&script_locale, "scan_internal_error")
-                        .replace("{error}", &format!("{}: {e}", dir.display())),
-                );
-                return None;
-            }
-            // Brand prefix, like `runner.py:167`
-            // (`{brand_prefix}-REPORT-{timestamp}.html`) — was hard-coded
-            // to `SCA`, so a white-label delivery still produced
-            // `SCA-REPORT-*` files (found by ticket #106).
-            Some(dir.join(format!(
-                "{}-REPORT-{timestamp}.html",
-                effective_prefix(&brand)
-            )))
-        } else {
-            None
-        }
-    });
-    if format == "html" && output.is_none() {
-        return ExitCode::from(4);
     }
 
     if sbom {
@@ -1272,6 +1642,25 @@ fn run_scan_command(args: ScanArgs) -> ExitCode {
             .replace("{loc}", &report.total_loc.to_string())
             .replace("{findings}", &report.findings.len().to_string())
     ));
+    // Whole command, from argument parsing to the written report
+    // (ticket #135) — the per-phase lines don't add up to it (rule
+    // loading aside, discovery and report rendering are not phases).
+    // Same never-suppressed treatment as the summary line above.
+    let total_elapsed = t_command_start.elapsed();
+    if JSON_LOGS.load(std::sync::atomic::Ordering::Relaxed) {
+        emit_json_line(
+            LogLevel::Info,
+            &sast_engine::i18n::t(&script_locale, "scan_total_duration")
+                .replace("{duration}", &format_duration(total_elapsed)),
+            Some(serde_json::json!(total_elapsed.as_millis())),
+        );
+    } else {
+        emit_result(&format!(
+            "[sast-engine] {}",
+            sast_engine::i18n::t(&script_locale, "scan_total_duration")
+                .replace("{duration}", &format_duration(total_elapsed))
+        ));
+    }
 
     let high_count = report
         .findings

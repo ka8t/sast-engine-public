@@ -305,6 +305,11 @@ pub struct ScanConfig {
     /// History directory (JSON export / baseline) — `None`
     /// disables export and baseline comparison.
     pub datas_dir: Option<PathBuf>,
+    /// Former history directory, read only as a fallback when
+    /// `datas_dir` holds no baseline yet (ticket #133: the default moved
+    /// from `docs/audit-reports/audit-datas` to
+    /// `audit-reports/audit-datas`). Never written. `None`: no fallback.
+    pub legacy_datas_dir: Option<PathBuf>,
     /// Naming prefix for history files (`{prefix}-DATA-*.json`).
     pub brand_prefix: String,
     /// `%Y-%m-%d-%H-%M` timestamp shared with the HTML report
@@ -416,6 +421,7 @@ impl Default for ScanConfig {
             advisories_dir: None,
             database: None,
             datas_dir: None,
+            legacy_datas_dir: None,
             brand_prefix: "SCA".to_string(),
             timestamp: String::new(),
             quick_mode: false,
@@ -428,6 +434,21 @@ impl Default for ScanConfig {
             script_locale: None,
         }
     }
+}
+
+/// Most recent baseline export: in `config.datas_dir`, or else in
+/// `config.legacy_datas_dir` (ticket #133 — keeps the comparison with
+/// the last scan made before the history directory moved). `None` when
+/// history is disabled (`datas_dir == None`) or empty in both places.
+fn find_baseline(config: &ScanConfig) -> Option<PathBuf> {
+    let datas_dir = config.datas_dir.as_ref()?;
+    crate::report::export_json::find_latest_baseline(datas_dir, &config.brand_prefix).or_else(
+        || {
+            config.legacy_datas_dir.as_ref().and_then(|legacy| {
+                crate::report::export_json::find_latest_baseline(legacy, &config.brand_prefix)
+            })
+        },
+    )
 }
 
 /// Resolves the text of a phase label — translated via
@@ -998,19 +1019,61 @@ pub fn run_scan(config: &ScanConfig) -> ScanReport {
     // Total number of phases planned for THIS scan — mirrors
     // `runner.py::_compute_phase_total` (already referenced above by
     // `ScanConfig::quick_mode`: "Python only affects these 3 phases").
-    // The 3 core phases always run (rules, phase A, phase B), the 5
-    // phase C taint phases (Python/Java/JS-TS/PHP/C#) always run, plus the
-    // optional phases actually enabled
+    // The 3 core phases always run (rules, phase A, phase B), the
+    // phase C taint passes (Python/Java/JS-TS/PHP/C#) of the languages
+    // present (ticket #134), plus the optional phases actually enabled
     // (dependencies/tests/database), disabled by `--quick` as on the
     // Python side. Computed once, before any phase, so that the live
     // `[n/N]` counter (ticket #45) is correct from the very first
     // message rather than a frozen constant that would go wrong as
     // soon as a phase is added (went from 7 to 8 in ticket #79 when
     // wiring up the C# taint engine).
+    // File discovery runs first, outside any timed phase (it used to sit
+    // between the rules phase and phase A): the languages it finds
+    // decide which phase C passes run, hence the `[n/N]` total printed
+    // from the very first phase on (ticket #134).
+    let discovery_config = FileDiscoveryConfig {
+        // Derived from `SourceLanguage::EXTENSIONS`, the sole authoritative
+        // list (fix 2026-11-04): a hand-maintained copy here had drifted
+        // from Python's `runner.py` lists (no `.vue`/`.svelte`/`.tsx`/`.inc`…).
+        extensions: SourceLanguage::EXTENSIONS
+            .iter()
+            .map(|(e, _)| format!(".{e}"))
+            .collect(),
+        // `Dockerfile` has no standard extension — recognized by exact
+        // case-insensitive name (ticket #69/spec #68, fixed on
+        // 2026-09-01 to cover the same 3 names as Python), not via
+        // `extensions` above. See `SourceLanguage::
+        // DOCKERFILE_FILENAMES`, the sole authoritative list.
+        filenames: SourceLanguage::DOCKERFILE_FILENAMES
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
+        exclude_patterns: config.exclude_patterns.clone(),
+        prune_excludes: config.exclude_patterns.clone(),
+    };
+    let include_paths: Vec<&Path> = config.include_paths.iter().map(Path::new).collect();
+    let files = find_files(&config.root, &include_paths, &discovery_config);
+
+    // Phase C passes whose language has at least one discovered file
+    // (ticket #134): a pass over zero files only cost time (31 ms for
+    // Java on a Python-only project) and a meaningless console line.
+    // Decided on the discovered files, not the parsed ones, so the total
+    // is known before phase A; a language whose every file fails to
+    // parse still runs its (empty) pass, which stays correct.
+    let has_language = |accepted: &[SourceLanguage]| {
+        files
+            .iter()
+            .any(|f| SourceLanguage::from_path(f).is_some_and(|lang| accepted.contains(&lang)))
+    };
+    let taint_python_active = has_language(&[SourceLanguage::Python]);
+    let taint_java_active = has_language(&[SourceLanguage::Java]);
+    let taint_js_active = has_language(&[SourceLanguage::JavaScript, SourceLanguage::TypeScript]);
+    let taint_php_active = has_language(&[SourceLanguage::Php]);
+    let taint_csharp_active = has_language(&[SourceLanguage::CSharp]);
+
     // Rules, phase A, phase B — always run.
     const CORE_PHASES: usize = 3;
-    // Phase C, one per taint language (Python/Java/JS-TS/PHP/C#).
-    const TAINT_PHASES: usize = 5;
     // A single source of truth per optional phase, reused both here
     // (computing `total_phases`) and by the `if` guard of its own
     // block further down — prevents the two from drifting apart if one
@@ -1019,11 +1082,19 @@ pub fn run_scan(config: &ScanConfig) -> ScanReport {
     let tests_phase_active = config.with_tests && !config.quick_mode;
     let database_phase_active = config.database.is_some() && !config.quick_mode;
     let total_phases = CORE_PHASES
-        + TAINT_PHASES
-        + [deps_phase_active, tests_phase_active, database_phase_active]
-            .into_iter()
-            .filter(|&active| active)
-            .count();
+        + [
+            taint_python_active,
+            taint_java_active,
+            taint_js_active,
+            taint_php_active,
+            taint_csharp_active,
+            deps_phase_active,
+            tests_phase_active,
+            database_phase_active,
+        ]
+        .into_iter()
+        .filter(|&active| active)
+        .count();
 
     let mut phase_timings: Vec<(String, std::time::Duration)> = Vec::new();
     // `label: &str` (not `&'static str`) since ticket #46: the phase A
@@ -1113,29 +1184,6 @@ pub fn run_scan(config: &ScanConfig) -> ScanReport {
             true
         })
         .collect();
-
-    let discovery_config = FileDiscoveryConfig {
-        // Derived from `SourceLanguage::EXTENSIONS`, the sole authoritative
-        // list (fix 2026-11-04): a hand-maintained copy here had drifted
-        // from Python's `runner.py` lists (no `.vue`/`.svelte`/`.tsx`/`.inc`…).
-        extensions: SourceLanguage::EXTENSIONS
-            .iter()
-            .map(|(e, _)| format!(".{e}"))
-            .collect(),
-        // `Dockerfile` has no standard extension — recognized by exact
-        // case-insensitive name (ticket #69/spec #68, fixed on
-        // 2026-09-01 to cover the same 3 names as Python), not via
-        // `extensions` above. See `SourceLanguage::
-        // DOCKERFILE_FILENAMES`, the sole authoritative list.
-        filenames: SourceLanguage::DOCKERFILE_FILENAMES
-            .iter()
-            .map(|s| s.to_string())
-            .collect(),
-        exclude_patterns: config.exclude_patterns.clone(),
-        prune_excludes: config.exclude_patterns.clone(),
-    };
-    let include_paths: Vec<&Path> = config.include_paths.iter().map(Path::new).collect();
-    let files = find_files(&config.root, &include_paths, &discovery_config);
 
     let suppressions = config
         .suppress_file
@@ -1316,257 +1364,264 @@ pub fn run_scan(config: &ScanConfig) -> ScanReport {
     // between the two blocks), fixed for both languages.
     let mut seen_taint: HashSet<(String, String, usize, Option<usize>)> = HashSet::new();
 
-    // --- Python ---------------------------------------------------------
-    let t_phase_c_python = std::time::Instant::now();
-    let python_files: Vec<&ParsedFile> = parsed_files
-        .iter()
-        .filter(|pf| pf.language == SourceLanguage::Python)
-        .collect();
-    let py_file_inputs: Vec<FileInput> = python_files
-        .iter()
-        .map(|pf| FileInput {
-            filepath: pf.rel_path.clone(),
-            root: pf.tree.root_node(),
-            source: pf.source_bytes.as_slice(),
-        })
-        .collect();
-    let call_graph = CallGraph::build(&py_file_inputs);
-    let py_source_lines_by_file: BTreeMap<String, Vec<String>> = python_files
-        .iter()
-        .map(|pf| (pf.rel_path.clone(), pf.source_lines_plain.clone()))
-        .collect();
+    if taint_python_active {
+        // --- Python ---------------------------------------------------------
+        let t_phase_c_python = std::time::Instant::now();
+        let python_files: Vec<&ParsedFile> = parsed_files
+            .iter()
+            .filter(|pf| pf.language == SourceLanguage::Python)
+            .collect();
+        let py_file_inputs: Vec<FileInput> = python_files
+            .iter()
+            .map(|pf| FileInput {
+                filepath: pf.rel_path.clone(),
+                root: pf.tree.root_node(),
+                source: pf.source_bytes.as_slice(),
+            })
+            .collect();
+        let call_graph = CallGraph::build(&py_file_inputs);
+        let py_source_lines_by_file: BTreeMap<String, Vec<String>> = python_files
+            .iter()
+            .map(|pf| (pf.rel_path.clone(), pf.source_lines_plain.clone()))
+            .collect();
 
-    // Parallelized **per rule**, not per file — measured (2026-08-26,
-    // `sample`/dedicated timers on `Audit/sca`, 34k lines):
-    // `resolve_summaries` (function summary resolution over the WHOLE
-    // call graph, once per rule) largely dominates the cost of this
-    // phase — up to 6-7s per taint rule, ~25 rules, against only 8s
-    // total for `run_taint_rule` over the 73 cumulative files.
-    // Parallelizing per file (first version) therefore barely touched
-    // the real bottleneck. Each rule is independent (its own
-    // specs/summaries/results); the final merge
-    // (deduplication/suppression/`integrate_taint_finding`) remains
-    // strictly sequential, in the original order of rules THEN files,
-    // for a result identical to the purely sequential version.
-    let python_rule_jsons: Vec<&serde_json::Value> = rule_jsons
-        .iter()
-        .filter(|r| {
-            r.get("language").and_then(|v| v.as_str()) == Some(SourceLanguage::Python.rule_tag())
-        })
-        .collect();
-    let per_rule_results: Vec<Option<Vec<Vec<crate::scan::dataflow::transfer::Finding>>>> =
-        python_rule_jsons
-            .par_iter()
-            .map(|rule_json| {
-                // `rule_json_to_specs` returns `Some` as soon as the rule
-                // has at least one source AND one sink — independently
-                // of `patterns` (a `regex+taint` rule therefore goes
-                // through BOTH pipelines, Phase B and Phase C, as on
-                // the Python side).
-                let base_specs = rule_json_to_specs(rule_json, &config.lang)?;
-                let (own, extra) =
-                    call_graph.resolve_summaries(&base_specs, Some(&py_source_lines_by_file));
-                // Cloned ONCE per rule (not per file) — only
-                // `.summaries` varies per file. Found on 2026-08-26
-                // while investigating slowness reported by the maintainer on a
-                // large Java corpus (same antipattern, see the Java
-                // block below and `java_call_graph.rs::resolve_summaries`
-                // fixed just before): `base_specs.clone()` (with its
-                // sources/sinks/sanitizers/passthroughs `Regex`) used to
-                // be redone for every file, i.e. (files × rules) times
-                // in total — pure waste, `sources`/`sinks`/
-                // `sanitizers`/`passthroughs` only depend on the rule,
-                // never on the file.
-                let mut node_specs = base_specs.clone();
-                let per_file: Vec<Vec<crate::scan::dataflow::transfer::Finding>> = python_files
-                    .iter()
-                    .map(|pf| {
-                        // File's own summaries take priority over
-                        // resolved imports (mirrors
-                        // `merged.update(summaries)` on the
-                        // `dataflow_taint.py` side: local > import).
-                        let mut summaries = extra.get(&pf.rel_path).cloned().unwrap_or_default();
-                        if let Some(own_here) = own.get(&pf.rel_path) {
-                            summaries.extend(own_here.clone());
-                        }
-                        node_specs.summaries = summaries;
-                        run_taint_rule(
-                            &pf.tree,
-                            &pf.source_bytes,
-                            &node_specs,
-                            Some(&pf.source_lines_plain),
-                        )
-                    })
-                    .collect();
-                Some(per_file)
+        // Parallelized **per rule**, not per file — measured (2026-08-26,
+        // `sample`/dedicated timers on `Audit/sca`, 34k lines):
+        // `resolve_summaries` (function summary resolution over the WHOLE
+        // call graph, once per rule) largely dominates the cost of this
+        // phase — up to 6-7s per taint rule, ~25 rules, against only 8s
+        // total for `run_taint_rule` over the 73 cumulative files.
+        // Parallelizing per file (first version) therefore barely touched
+        // the real bottleneck. Each rule is independent (its own
+        // specs/summaries/results); the final merge
+        // (deduplication/suppression/`integrate_taint_finding`) remains
+        // strictly sequential, in the original order of rules THEN files,
+        // for a result identical to the purely sequential version.
+        let python_rule_jsons: Vec<&serde_json::Value> = rule_jsons
+            .iter()
+            .filter(|r| {
+                r.get("language").and_then(|v| v.as_str())
+                    == Some(SourceLanguage::Python.rule_tag())
+            })
+            .collect();
+        let per_rule_results: Vec<Option<Vec<Vec<crate::scan::dataflow::transfer::Finding>>>> =
+            python_rule_jsons
+                .par_iter()
+                .map(|rule_json| {
+                    // `rule_json_to_specs` returns `Some` as soon as the rule
+                    // has at least one source AND one sink — independently
+                    // of `patterns` (a `regex+taint` rule therefore goes
+                    // through BOTH pipelines, Phase B and Phase C, as on
+                    // the Python side).
+                    let base_specs = rule_json_to_specs(rule_json, &config.lang)?;
+                    let (own, extra) =
+                        call_graph.resolve_summaries(&base_specs, Some(&py_source_lines_by_file));
+                    // Cloned ONCE per rule (not per file) — only
+                    // `.summaries` varies per file. Found on 2026-08-26
+                    // while investigating slowness reported by the maintainer on a
+                    // large Java corpus (same antipattern, see the Java
+                    // block below and `java_call_graph.rs::resolve_summaries`
+                    // fixed just before): `base_specs.clone()` (with its
+                    // sources/sinks/sanitizers/passthroughs `Regex`) used to
+                    // be redone for every file, i.e. (files × rules) times
+                    // in total — pure waste, `sources`/`sinks`/
+                    // `sanitizers`/`passthroughs` only depend on the rule,
+                    // never on the file.
+                    let mut node_specs = base_specs.clone();
+                    let per_file: Vec<Vec<crate::scan::dataflow::transfer::Finding>> = python_files
+                        .iter()
+                        .map(|pf| {
+                            // File's own summaries take priority over
+                            // resolved imports (mirrors
+                            // `merged.update(summaries)` on the
+                            // `dataflow_taint.py` side: local > import).
+                            let mut summaries =
+                                extra.get(&pf.rel_path).cloned().unwrap_or_default();
+                            if let Some(own_here) = own.get(&pf.rel_path) {
+                                summaries.extend(own_here.clone());
+                            }
+                            node_specs.summaries = summaries;
+                            run_taint_rule(
+                                &pf.tree,
+                                &pf.source_bytes,
+                                &node_specs,
+                                Some(&pf.source_lines_plain),
+                            )
+                        })
+                        .collect();
+                    Some(per_file)
+                })
+                .collect();
+
+        for (rule_json, maybe_per_file) in python_rule_jsons.iter().zip(per_rule_results) {
+            let Some(per_file) = maybe_per_file else {
+                continue;
+            };
+            for (pf, findings) in python_files.iter().zip(per_file) {
+                for f in findings {
+                    let key = (
+                        pf.rel_path.clone(),
+                        f.rule_id.clone(),
+                        f.line,
+                        f.source_line,
+                    );
+                    if !seen_taint.insert(key) {
+                        continue;
+                    }
+                    let code = line_text(&pf.all_lines, f.line);
+                    if suppressions.is_suppressed(&f.rule_id, &pf.rel_path, &code) {
+                        continue;
+                    }
+                    if is_inline_ignored(&code, &f.rule_id) {
+                        continue;
+                    }
+                    integrate_taint_finding(
+                        &mut all_findings,
+                        taint_finding_to_report(
+                            &f,
+                            rule_json,
+                            &pf.rel_path,
+                            &pf.source_lines_plain,
+                            &config.lang,
+                        ),
+                    );
+                }
+            }
+        }
+        record_phase(
+            &phase_label(config, "scan_phase_c_python", "phase C - Python (taint)"),
+            t_phase_c_python.elapsed(),
+        );
+    }
+
+    if taint_java_active {
+        // --- Java -------------------------------------------------------------
+        let t_phase_c_java = std::time::Instant::now();
+        let java_files: Vec<&ParsedFile> = parsed_files
+            .iter()
+            .filter(|pf| pf.language == SourceLanguage::Java)
+            .collect();
+        let java_file_inputs: Vec<FileInput> = java_files
+            .iter()
+            .map(|pf| FileInput {
+                filepath: pf.rel_path.clone(),
+                root: pf.tree.root_node(),
+                source: pf.source_bytes.as_slice(),
+            })
+            .collect();
+        let java_call_graph = JavaCallGraph::build(&java_file_inputs);
+        let java_source_lines_by_file: BTreeMap<String, Vec<String>> = java_files
+            .iter()
+            .map(|pf| (pf.rel_path.clone(), pf.source_lines_plain.clone()))
+            .collect();
+        // Round 5 (`scr.method()` resolution via declared type) —
+        // recomputed per file, independently of the call graph (same
+        // logical dict as `JavaCallGraph::build`, MUST stay in sync — see
+        // the doc comment of `collect_java_field_types`, same choice as
+        // `dataflow_taint_java.py` on the Python source side).
+        let java_type_map_by_file: BTreeMap<String, BTreeMap<String, String>> = java_files
+            .iter()
+            .map(|pf| {
+                let mut type_map = collect_java_field_types(pf.tree.root_node(), &pf.source_bytes);
+                type_map.extend(collect_java_local_types(
+                    pf.tree.root_node(),
+                    &pf.source_bytes,
+                ));
+                (pf.rel_path.clone(), type_map)
             })
             .collect();
 
-    for (rule_json, maybe_per_file) in python_rule_jsons.iter().zip(per_rule_results) {
-        let Some(per_file) = maybe_per_file else {
-            continue;
-        };
-        for (pf, findings) in python_files.iter().zip(per_file) {
-            for f in findings {
-                let key = (
-                    pf.rel_path.clone(),
-                    f.rule_id.clone(),
-                    f.line,
-                    f.source_line,
-                );
-                if !seen_taint.insert(key) {
-                    continue;
-                }
-                let code = line_text(&pf.all_lines, f.line);
-                if suppressions.is_suppressed(&f.rule_id, &pf.rel_path, &code) {
-                    continue;
-                }
-                if is_inline_ignored(&code, &f.rule_id) {
-                    continue;
-                }
-                integrate_taint_finding(
-                    &mut all_findings,
-                    taint_finding_to_report(
-                        &f,
-                        rule_json,
-                        &pf.rel_path,
-                        &pf.source_lines_plain,
-                        &config.lang,
-                    ),
-                );
-            }
-        }
-    }
-    record_phase(
-        &phase_label(config, "scan_phase_c_python", "phase C - Python (taint)"),
-        t_phase_c_python.elapsed(),
-    );
-
-    // --- Java -------------------------------------------------------------
-    let t_phase_c_java = std::time::Instant::now();
-    let java_files: Vec<&ParsedFile> = parsed_files
-        .iter()
-        .filter(|pf| pf.language == SourceLanguage::Java)
-        .collect();
-    let java_file_inputs: Vec<FileInput> = java_files
-        .iter()
-        .map(|pf| FileInput {
-            filepath: pf.rel_path.clone(),
-            root: pf.tree.root_node(),
-            source: pf.source_bytes.as_slice(),
-        })
-        .collect();
-    let java_call_graph = JavaCallGraph::build(&java_file_inputs);
-    let java_source_lines_by_file: BTreeMap<String, Vec<String>> = java_files
-        .iter()
-        .map(|pf| (pf.rel_path.clone(), pf.source_lines_plain.clone()))
-        .collect();
-    // Round 5 (`scr.method()` resolution via declared type) —
-    // recomputed per file, independently of the call graph (same
-    // logical dict as `JavaCallGraph::build`, MUST stay in sync — see
-    // the doc comment of `collect_java_field_types`, same choice as
-    // `dataflow_taint_java.py` on the Python source side).
-    let java_type_map_by_file: BTreeMap<String, BTreeMap<String, String>> = java_files
-        .iter()
-        .map(|pf| {
-            let mut type_map = collect_java_field_types(pf.tree.root_node(), &pf.source_bytes);
-            type_map.extend(collect_java_local_types(
-                pf.tree.root_node(),
-                &pf.source_bytes,
-            ));
-            (pf.rel_path.clone(), type_map)
-        })
-        .collect();
-
-    // Parallelized **per rule**, not per file — same fix as the Python
-    // block above (found while diagnosing Python, never reapplied to
-    // Java until now: reported by the maintainer, 2026-08-26, while comparing a
-    // Java scan to Python — `resolve_summaries` (function summary
-    // resolution over the whole call graph, once per rule) dominates
-    // the cost, not per-file `run_taint_rule_java`).
-    let java_rule_jsons: Vec<&serde_json::Value> = rule_jsons
-        .iter()
-        .filter(|r| {
-            r.get("language").and_then(|v| v.as_str()) == Some(SourceLanguage::Java.rule_tag())
-        })
-        .collect();
-    let java_per_rule_results: Vec<Option<Vec<Vec<crate::scan::dataflow::transfer::Finding>>>> =
-        java_rule_jsons
-            .par_iter()
-            .map(|rule_json| {
-                let base_specs = rule_json_to_specs(rule_json, &config.lang)?;
-                let (own, extra) = java_call_graph
-                    .resolve_summaries(&base_specs, Some(&java_source_lines_by_file));
-                // Cloned ONCE per rule — see the equivalent comment in
-                // the Python block above. It was THIS clone, repeated
-                // per file (40,000 times on a corpus of 2000 files ×
-                // 20 rules), that dominated the real cost of the Java
-                // phase on OWASP BenchmarkJava — not `resolve_summaries`
-                // itself (already fixed, only a marginal gain).
-                let mut node_specs = base_specs.clone();
-                let per_file: Vec<Vec<crate::scan::dataflow::transfer::Finding>> = java_files
-                    .iter()
-                    .map(|pf| {
-                        let mut summaries = extra.get(&pf.rel_path).cloned().unwrap_or_default();
-                        if let Some(own_here) = own.get(&pf.rel_path) {
-                            summaries.extend(own_here.clone());
-                        }
-                        node_specs.summaries = summaries;
-                        node_specs.type_map = java_type_map_by_file
-                            .get(&pf.rel_path)
-                            .cloned()
-                            .unwrap_or_default();
-                        run_taint_rule_java(
-                            pf.tree.root_node(),
-                            &pf.source_bytes,
-                            &node_specs,
-                            Some(&pf.source_lines_plain),
-                        )
-                    })
-                    .collect();
-                Some(per_file)
+        // Parallelized **per rule**, not per file — same fix as the Python
+        // block above (found while diagnosing Python, never reapplied to
+        // Java until now: reported by the maintainer, 2026-08-26, while comparing a
+        // Java scan to Python — `resolve_summaries` (function summary
+        // resolution over the whole call graph, once per rule) dominates
+        // the cost, not per-file `run_taint_rule_java`).
+        let java_rule_jsons: Vec<&serde_json::Value> = rule_jsons
+            .iter()
+            .filter(|r| {
+                r.get("language").and_then(|v| v.as_str()) == Some(SourceLanguage::Java.rule_tag())
             })
             .collect();
+        let java_per_rule_results: Vec<Option<Vec<Vec<crate::scan::dataflow::transfer::Finding>>>> =
+            java_rule_jsons
+                .par_iter()
+                .map(|rule_json| {
+                    let base_specs = rule_json_to_specs(rule_json, &config.lang)?;
+                    let (own, extra) = java_call_graph
+                        .resolve_summaries(&base_specs, Some(&java_source_lines_by_file));
+                    // Cloned ONCE per rule — see the equivalent comment in
+                    // the Python block above. It was THIS clone, repeated
+                    // per file (40,000 times on a corpus of 2000 files ×
+                    // 20 rules), that dominated the real cost of the Java
+                    // phase on OWASP BenchmarkJava — not `resolve_summaries`
+                    // itself (already fixed, only a marginal gain).
+                    let mut node_specs = base_specs.clone();
+                    let per_file: Vec<Vec<crate::scan::dataflow::transfer::Finding>> = java_files
+                        .iter()
+                        .map(|pf| {
+                            let mut summaries =
+                                extra.get(&pf.rel_path).cloned().unwrap_or_default();
+                            if let Some(own_here) = own.get(&pf.rel_path) {
+                                summaries.extend(own_here.clone());
+                            }
+                            node_specs.summaries = summaries;
+                            node_specs.type_map = java_type_map_by_file
+                                .get(&pf.rel_path)
+                                .cloned()
+                                .unwrap_or_default();
+                            run_taint_rule_java(
+                                pf.tree.root_node(),
+                                &pf.source_bytes,
+                                &node_specs,
+                                Some(&pf.source_lines_plain),
+                            )
+                        })
+                        .collect();
+                    Some(per_file)
+                })
+                .collect();
 
-    for (rule_json, maybe_per_file) in java_rule_jsons.iter().zip(java_per_rule_results) {
-        let Some(per_file) = maybe_per_file else {
-            continue;
-        };
-        for (pf, findings) in java_files.iter().zip(per_file) {
-            for f in findings {
-                let key = (
-                    pf.rel_path.clone(),
-                    f.rule_id.clone(),
-                    f.line,
-                    f.source_line,
-                );
-                if !seen_taint.insert(key) {
-                    continue;
+        for (rule_json, maybe_per_file) in java_rule_jsons.iter().zip(java_per_rule_results) {
+            let Some(per_file) = maybe_per_file else {
+                continue;
+            };
+            for (pf, findings) in java_files.iter().zip(per_file) {
+                for f in findings {
+                    let key = (
+                        pf.rel_path.clone(),
+                        f.rule_id.clone(),
+                        f.line,
+                        f.source_line,
+                    );
+                    if !seen_taint.insert(key) {
+                        continue;
+                    }
+                    let code = line_text(&pf.all_lines, f.line);
+                    if suppressions.is_suppressed(&f.rule_id, &pf.rel_path, &code) {
+                        continue;
+                    }
+                    if is_inline_ignored(&code, &f.rule_id) {
+                        continue;
+                    }
+                    integrate_taint_finding(
+                        &mut all_findings,
+                        taint_finding_to_report(
+                            &f,
+                            rule_json,
+                            &pf.rel_path,
+                            &pf.source_lines_plain,
+                            &config.lang,
+                        ),
+                    );
                 }
-                let code = line_text(&pf.all_lines, f.line);
-                if suppressions.is_suppressed(&f.rule_id, &pf.rel_path, &code) {
-                    continue;
-                }
-                if is_inline_ignored(&code, &f.rule_id) {
-                    continue;
-                }
-                integrate_taint_finding(
-                    &mut all_findings,
-                    taint_finding_to_report(
-                        &f,
-                        rule_json,
-                        &pf.rel_path,
-                        &pf.source_lines_plain,
-                        &config.lang,
-                    ),
-                );
             }
         }
+        record_phase(
+            &phase_label(config, "scan_phase_c_java", "phase C - Java (taint)"),
+            t_phase_c_java.elapsed(),
+        );
     }
-    record_phase(
-        &phase_label(config, "scan_phase_c_java", "phase C - Java (taint)"),
-        t_phase_c_java.elapsed(),
-    );
 
     // --- JavaScript / TypeScript ---------------------------------------------
     // Interprocedural resolution wired up on 08/30 (`js_call_graph.rs`)
@@ -1579,109 +1634,112 @@ pub fn run_scan(config: &ScanConfig) -> ScanReport {
     // path, not suffix or FQCN). Both languages share this same block
     // — `run_taint_rule_js` works indifferently on a JS or TS tree
     // (see the doc comment of `js_lowering.rs`).
-    let t_phase_c_js = std::time::Instant::now();
-    let js_files: Vec<&ParsedFile> = parsed_files
-        .iter()
-        .filter(|pf| {
-            matches!(
-                pf.language,
-                SourceLanguage::JavaScript | SourceLanguage::TypeScript
-            )
-        })
-        .collect();
-    let js_file_inputs: Vec<FileInput> = js_files
-        .iter()
-        .map(|pf| FileInput {
-            filepath: pf.rel_path.clone(),
-            root: pf.tree.root_node(),
-            source: pf.source_bytes.as_slice(),
-        })
-        .collect();
-    let js_call_graph = JsCallGraph::build(&js_file_inputs);
-    let js_source_lines_by_file: BTreeMap<String, Vec<String>> = js_files
-        .iter()
-        .map(|pf| (pf.rel_path.clone(), pf.source_lines_plain.clone()))
-        .collect();
-
-    // Parallelized per rule, not per file — see the equivalent comment
-    // in the Python block above (`resolve_summaries` dominates the cost).
-    let js_rule_jsons: Vec<&serde_json::Value> = rule_jsons
-        .iter()
-        .filter(|r| {
-            r.get("language").and_then(|v| v.as_str())
-                == Some(SourceLanguage::JavaScript.rule_tag())
-        })
-        .collect();
-    let js_per_rule_results: Vec<Option<Vec<Vec<crate::scan::dataflow::transfer::Finding>>>> =
-        js_rule_jsons
-            .par_iter()
-            .map(|rule_json| {
-                let base_specs = rule_json_to_specs(rule_json, &config.lang)?;
-                let (own, extra) =
-                    js_call_graph.resolve_summaries(&base_specs, Some(&js_source_lines_by_file));
-                let mut node_specs = base_specs.clone();
-                let per_file: Vec<Vec<crate::scan::dataflow::transfer::Finding>> = js_files
-                    .iter()
-                    .map(|pf| {
-                        // File's own summaries take priority over
-                        // resolved imports (own > extra, same
-                        // convention as the Python block).
-                        let mut summaries = extra.get(&pf.rel_path).cloned().unwrap_or_default();
-                        if let Some(own_here) = own.get(&pf.rel_path) {
-                            summaries.extend(own_here.clone());
-                        }
-                        node_specs.summaries = summaries;
-                        run_taint_rule_js(
-                            pf.tree.root_node(),
-                            &pf.source_bytes,
-                            &node_specs,
-                            Some(&pf.source_lines_plain),
-                        )
-                    })
-                    .collect();
-                Some(per_file)
+    if taint_js_active {
+        let t_phase_c_js = std::time::Instant::now();
+        let js_files: Vec<&ParsedFile> = parsed_files
+            .iter()
+            .filter(|pf| {
+                matches!(
+                    pf.language,
+                    SourceLanguage::JavaScript | SourceLanguage::TypeScript
+                )
             })
             .collect();
+        let js_file_inputs: Vec<FileInput> = js_files
+            .iter()
+            .map(|pf| FileInput {
+                filepath: pf.rel_path.clone(),
+                root: pf.tree.root_node(),
+                source: pf.source_bytes.as_slice(),
+            })
+            .collect();
+        let js_call_graph = JsCallGraph::build(&js_file_inputs);
+        let js_source_lines_by_file: BTreeMap<String, Vec<String>> = js_files
+            .iter()
+            .map(|pf| (pf.rel_path.clone(), pf.source_lines_plain.clone()))
+            .collect();
 
-    for (rule_json, maybe_per_file) in js_rule_jsons.iter().zip(js_per_rule_results) {
-        let Some(per_file) = maybe_per_file else {
-            continue;
-        };
-        for (pf, findings) in js_files.iter().zip(per_file) {
-            for f in findings {
-                let key = (
-                    pf.rel_path.clone(),
-                    f.rule_id.clone(),
-                    f.line,
-                    f.source_line,
-                );
-                if !seen_taint.insert(key) {
-                    continue;
+        // Parallelized per rule, not per file — see the equivalent comment
+        // in the Python block above (`resolve_summaries` dominates the cost).
+        let js_rule_jsons: Vec<&serde_json::Value> = rule_jsons
+            .iter()
+            .filter(|r| {
+                r.get("language").and_then(|v| v.as_str())
+                    == Some(SourceLanguage::JavaScript.rule_tag())
+            })
+            .collect();
+        let js_per_rule_results: Vec<Option<Vec<Vec<crate::scan::dataflow::transfer::Finding>>>> =
+            js_rule_jsons
+                .par_iter()
+                .map(|rule_json| {
+                    let base_specs = rule_json_to_specs(rule_json, &config.lang)?;
+                    let (own, extra) = js_call_graph
+                        .resolve_summaries(&base_specs, Some(&js_source_lines_by_file));
+                    let mut node_specs = base_specs.clone();
+                    let per_file: Vec<Vec<crate::scan::dataflow::transfer::Finding>> = js_files
+                        .iter()
+                        .map(|pf| {
+                            // File's own summaries take priority over
+                            // resolved imports (own > extra, same
+                            // convention as the Python block).
+                            let mut summaries =
+                                extra.get(&pf.rel_path).cloned().unwrap_or_default();
+                            if let Some(own_here) = own.get(&pf.rel_path) {
+                                summaries.extend(own_here.clone());
+                            }
+                            node_specs.summaries = summaries;
+                            run_taint_rule_js(
+                                pf.tree.root_node(),
+                                &pf.source_bytes,
+                                &node_specs,
+                                Some(&pf.source_lines_plain),
+                            )
+                        })
+                        .collect();
+                    Some(per_file)
+                })
+                .collect();
+
+        for (rule_json, maybe_per_file) in js_rule_jsons.iter().zip(js_per_rule_results) {
+            let Some(per_file) = maybe_per_file else {
+                continue;
+            };
+            for (pf, findings) in js_files.iter().zip(per_file) {
+                for f in findings {
+                    let key = (
+                        pf.rel_path.clone(),
+                        f.rule_id.clone(),
+                        f.line,
+                        f.source_line,
+                    );
+                    if !seen_taint.insert(key) {
+                        continue;
+                    }
+                    let code = line_text(&pf.all_lines, f.line);
+                    if suppressions.is_suppressed(&f.rule_id, &pf.rel_path, &code) {
+                        continue;
+                    }
+                    if is_inline_ignored(&code, &f.rule_id) {
+                        continue;
+                    }
+                    integrate_taint_finding(
+                        &mut all_findings,
+                        taint_finding_to_report(
+                            &f,
+                            rule_json,
+                            &pf.rel_path,
+                            &pf.source_lines_plain,
+                            &config.lang,
+                        ),
+                    );
                 }
-                let code = line_text(&pf.all_lines, f.line);
-                if suppressions.is_suppressed(&f.rule_id, &pf.rel_path, &code) {
-                    continue;
-                }
-                if is_inline_ignored(&code, &f.rule_id) {
-                    continue;
-                }
-                integrate_taint_finding(
-                    &mut all_findings,
-                    taint_finding_to_report(
-                        &f,
-                        rule_json,
-                        &pf.rel_path,
-                        &pf.source_lines_plain,
-                        &config.lang,
-                    ),
-                );
             }
         }
+        record_phase(
+            &phase_label(config, "scan_phase_c_js", "phase C - JS/TS (taint)"),
+            t_phase_c_js.elapsed(),
+        );
     }
-    record_phase(
-        &phase_label(config, "scan_phase_c_js", "phase C - JS/TS (taint)"),
-        t_phase_c_js.elapsed(),
-    );
 
     // --- PHP --------------------------------------------------------------
     // Interprocedural resolution wired up on 08/30 (`php_call_graph.rs`)
@@ -1691,100 +1749,103 @@ pub fn run_scan(config: &ScanConfig) -> ScanReport {
     // of `require`/`include`, global class-name index for static-scope
     // calls — no scope/namespace notion tracked). Separate rule
     // catalog (`rule_tag() == "php"`, not shared with JS).
-    let t_phase_c_php = std::time::Instant::now();
-    let php_files: Vec<&ParsedFile> = parsed_files
-        .iter()
-        .filter(|pf| pf.language == SourceLanguage::Php)
-        .collect();
-    let php_file_inputs: Vec<FileInput> = php_files
-        .iter()
-        .map(|pf| FileInput {
-            filepath: pf.rel_path.clone(),
-            root: pf.tree.root_node(),
-            source: pf.source_bytes.as_slice(),
-        })
-        .collect();
-    let php_call_graph = PhpCallGraph::build(&php_file_inputs);
-    let php_source_lines_by_file: BTreeMap<String, Vec<String>> = php_files
-        .iter()
-        .map(|pf| (pf.rel_path.clone(), pf.source_lines_plain.clone()))
-        .collect();
-
-    // Parallelized per rule, not per file — see the equivalent comment
-    // in the Python block above (`resolve_summaries` dominates the cost).
-    let php_rule_jsons: Vec<&serde_json::Value> = rule_jsons
-        .iter()
-        .filter(|r| {
-            r.get("language").and_then(|v| v.as_str()) == Some(SourceLanguage::Php.rule_tag())
-        })
-        .collect();
-    let php_per_rule_results: Vec<Option<Vec<Vec<crate::scan::dataflow::transfer::Finding>>>> =
-        php_rule_jsons
-            .par_iter()
-            .map(|rule_json| {
-                let base_specs = rule_json_to_specs(rule_json, &config.lang)?;
-                let (own, extra) =
-                    php_call_graph.resolve_summaries(&base_specs, Some(&php_source_lines_by_file));
-                let mut node_specs = base_specs.clone();
-                let per_file: Vec<Vec<crate::scan::dataflow::transfer::Finding>> = php_files
-                    .iter()
-                    .map(|pf| {
-                        let mut summaries = extra.get(&pf.rel_path).cloned().unwrap_or_default();
-                        if let Some(own_here) = own.get(&pf.rel_path) {
-                            summaries.extend(own_here.clone());
-                        }
-                        node_specs.summaries = summaries;
-                        run_taint_rule_php(
-                            pf.tree.root_node(),
-                            &pf.source_bytes,
-                            &node_specs,
-                            Some(&pf.source_lines_plain),
-                        )
-                    })
-                    .collect();
-                Some(per_file)
+    if taint_php_active {
+        let t_phase_c_php = std::time::Instant::now();
+        let php_files: Vec<&ParsedFile> = parsed_files
+            .iter()
+            .filter(|pf| pf.language == SourceLanguage::Php)
+            .collect();
+        let php_file_inputs: Vec<FileInput> = php_files
+            .iter()
+            .map(|pf| FileInput {
+                filepath: pf.rel_path.clone(),
+                root: pf.tree.root_node(),
+                source: pf.source_bytes.as_slice(),
             })
             .collect();
+        let php_call_graph = PhpCallGraph::build(&php_file_inputs);
+        let php_source_lines_by_file: BTreeMap<String, Vec<String>> = php_files
+            .iter()
+            .map(|pf| (pf.rel_path.clone(), pf.source_lines_plain.clone()))
+            .collect();
 
-    for (rule_json, maybe_per_file) in php_rule_jsons.iter().zip(php_per_rule_results) {
-        let Some(per_file) = maybe_per_file else {
-            continue;
-        };
-        for (pf, findings) in php_files.iter().zip(per_file) {
-            for f in findings {
-                let key = (
-                    pf.rel_path.clone(),
-                    f.rule_id.clone(),
-                    f.line,
-                    f.source_line,
-                );
-                if !seen_taint.insert(key) {
-                    continue;
+        // Parallelized per rule, not per file — see the equivalent comment
+        // in the Python block above (`resolve_summaries` dominates the cost).
+        let php_rule_jsons: Vec<&serde_json::Value> = rule_jsons
+            .iter()
+            .filter(|r| {
+                r.get("language").and_then(|v| v.as_str()) == Some(SourceLanguage::Php.rule_tag())
+            })
+            .collect();
+        let php_per_rule_results: Vec<Option<Vec<Vec<crate::scan::dataflow::transfer::Finding>>>> =
+            php_rule_jsons
+                .par_iter()
+                .map(|rule_json| {
+                    let base_specs = rule_json_to_specs(rule_json, &config.lang)?;
+                    let (own, extra) = php_call_graph
+                        .resolve_summaries(&base_specs, Some(&php_source_lines_by_file));
+                    let mut node_specs = base_specs.clone();
+                    let per_file: Vec<Vec<crate::scan::dataflow::transfer::Finding>> = php_files
+                        .iter()
+                        .map(|pf| {
+                            let mut summaries =
+                                extra.get(&pf.rel_path).cloned().unwrap_or_default();
+                            if let Some(own_here) = own.get(&pf.rel_path) {
+                                summaries.extend(own_here.clone());
+                            }
+                            node_specs.summaries = summaries;
+                            run_taint_rule_php(
+                                pf.tree.root_node(),
+                                &pf.source_bytes,
+                                &node_specs,
+                                Some(&pf.source_lines_plain),
+                            )
+                        })
+                        .collect();
+                    Some(per_file)
+                })
+                .collect();
+
+        for (rule_json, maybe_per_file) in php_rule_jsons.iter().zip(php_per_rule_results) {
+            let Some(per_file) = maybe_per_file else {
+                continue;
+            };
+            for (pf, findings) in php_files.iter().zip(per_file) {
+                for f in findings {
+                    let key = (
+                        pf.rel_path.clone(),
+                        f.rule_id.clone(),
+                        f.line,
+                        f.source_line,
+                    );
+                    if !seen_taint.insert(key) {
+                        continue;
+                    }
+                    let code = line_text(&pf.all_lines, f.line);
+                    if suppressions.is_suppressed(&f.rule_id, &pf.rel_path, &code) {
+                        continue;
+                    }
+                    if is_inline_ignored(&code, &f.rule_id) {
+                        continue;
+                    }
+                    integrate_taint_finding(
+                        &mut all_findings,
+                        taint_finding_to_report(
+                            &f,
+                            rule_json,
+                            &pf.rel_path,
+                            &pf.source_lines_plain,
+                            &config.lang,
+                        ),
+                    );
                 }
-                let code = line_text(&pf.all_lines, f.line);
-                if suppressions.is_suppressed(&f.rule_id, &pf.rel_path, &code) {
-                    continue;
-                }
-                if is_inline_ignored(&code, &f.rule_id) {
-                    continue;
-                }
-                integrate_taint_finding(
-                    &mut all_findings,
-                    taint_finding_to_report(
-                        &f,
-                        rule_json,
-                        &pf.rel_path,
-                        &pf.source_lines_plain,
-                        &config.lang,
-                    ),
-                );
             }
         }
+        record_phase(
+            &phase_label(config, "scan_phase_c_php", "phase C - PHP (taint)"),
+            t_phase_c_php.elapsed(),
+        );
     }
-    record_phase(
-        &phase_label(config, "scan_phase_c_php", "phase C - PHP (taint)"),
-        t_phase_c_php.elapsed(),
-    );
 
     // --- C# (taint) ---------------------------------------------------------
     // Ticket #79/spec #77. **Intra-file only** — no C# call graph (see
@@ -1792,31 +1853,35 @@ pub fn run_scan(config: &ScanConfig) -> ScanReport {
     // Python/Java/JS/PHP blocks above, `compute_csharp_file_summaries`
     // is recomputed per (rule, file) directly on that single file — no
     // cross-file `own`/`extra` merge (there is no `extra` here).
-    let t_phase_c_csharp = std::time::Instant::now();
-    let csharp_files: Vec<&ParsedFile> = parsed_files
-        .iter()
-        .filter(|pf| pf.language == SourceLanguage::CSharp)
-        .collect();
-    let csharp_type_map_by_file: BTreeMap<String, BTreeMap<String, String>> = csharp_files
-        .iter()
-        .map(|pf| {
-            let mut type_map = collect_csharp_field_types(pf.tree.root_node(), &pf.source_bytes);
-            type_map.extend(collect_csharp_local_types(
-                pf.tree.root_node(),
-                &pf.source_bytes,
-            ));
-            (pf.rel_path.clone(), type_map)
-        })
-        .collect();
+    if taint_csharp_active {
+        let t_phase_c_csharp = std::time::Instant::now();
+        let csharp_files: Vec<&ParsedFile> = parsed_files
+            .iter()
+            .filter(|pf| pf.language == SourceLanguage::CSharp)
+            .collect();
+        let csharp_type_map_by_file: BTreeMap<String, BTreeMap<String, String>> = csharp_files
+            .iter()
+            .map(|pf| {
+                let mut type_map =
+                    collect_csharp_field_types(pf.tree.root_node(), &pf.source_bytes);
+                type_map.extend(collect_csharp_local_types(
+                    pf.tree.root_node(),
+                    &pf.source_bytes,
+                ));
+                (pf.rel_path.clone(), type_map)
+            })
+            .collect();
 
-    let csharp_rule_jsons: Vec<&serde_json::Value> = rule_jsons
-        .iter()
-        .filter(|r| {
-            r.get("language").and_then(|v| v.as_str()) == Some(SourceLanguage::CSharp.rule_tag())
-        })
-        .collect();
-    let csharp_per_rule_results: Vec<Option<Vec<Vec<crate::scan::dataflow::transfer::Finding>>>> =
-        csharp_rule_jsons
+        let csharp_rule_jsons: Vec<&serde_json::Value> = rule_jsons
+            .iter()
+            .filter(|r| {
+                r.get("language").and_then(|v| v.as_str())
+                    == Some(SourceLanguage::CSharp.rule_tag())
+            })
+            .collect();
+        let csharp_per_rule_results: Vec<
+            Option<Vec<Vec<crate::scan::dataflow::transfer::Finding>>>,
+        > = csharp_rule_jsons
             .par_iter()
             .map(|rule_json| {
                 let base_specs = rule_json_to_specs(rule_json, &config.lang)?;
@@ -1846,45 +1911,46 @@ pub fn run_scan(config: &ScanConfig) -> ScanReport {
             })
             .collect();
 
-    for (rule_json, maybe_per_file) in csharp_rule_jsons.iter().zip(csharp_per_rule_results) {
-        let Some(per_file) = maybe_per_file else {
-            continue;
-        };
-        for (pf, findings) in csharp_files.iter().zip(per_file) {
-            for f in findings {
-                let key = (
-                    pf.rel_path.clone(),
-                    f.rule_id.clone(),
-                    f.line,
-                    f.source_line,
-                );
-                if !seen_taint.insert(key) {
-                    continue;
+        for (rule_json, maybe_per_file) in csharp_rule_jsons.iter().zip(csharp_per_rule_results) {
+            let Some(per_file) = maybe_per_file else {
+                continue;
+            };
+            for (pf, findings) in csharp_files.iter().zip(per_file) {
+                for f in findings {
+                    let key = (
+                        pf.rel_path.clone(),
+                        f.rule_id.clone(),
+                        f.line,
+                        f.source_line,
+                    );
+                    if !seen_taint.insert(key) {
+                        continue;
+                    }
+                    let code = line_text(&pf.all_lines, f.line);
+                    if suppressions.is_suppressed(&f.rule_id, &pf.rel_path, &code) {
+                        continue;
+                    }
+                    if is_inline_ignored(&code, &f.rule_id) {
+                        continue;
+                    }
+                    integrate_taint_finding(
+                        &mut all_findings,
+                        taint_finding_to_report(
+                            &f,
+                            rule_json,
+                            &pf.rel_path,
+                            &pf.source_lines_plain,
+                            &config.lang,
+                        ),
+                    );
                 }
-                let code = line_text(&pf.all_lines, f.line);
-                if suppressions.is_suppressed(&f.rule_id, &pf.rel_path, &code) {
-                    continue;
-                }
-                if is_inline_ignored(&code, &f.rule_id) {
-                    continue;
-                }
-                integrate_taint_finding(
-                    &mut all_findings,
-                    taint_finding_to_report(
-                        &f,
-                        rule_json,
-                        &pf.rel_path,
-                        &pf.source_lines_plain,
-                        &config.lang,
-                    ),
-                );
             }
         }
+        record_phase(
+            &phase_label(config, "scan_phase_c_csharp", "phase C - C# (taint)"),
+            t_phase_c_csharp.elapsed(),
+        );
     }
-    record_phase(
-        &phase_label(config, "scan_phase_c_csharp", "phase C - C# (taint)"),
-        t_phase_c_csharp.elapsed(),
-    );
 
     let _ = rule_category; // kept for future use (CLI category filtering)
 
@@ -1997,11 +2063,7 @@ pub fn run_scan(config: &ScanConfig) -> ScanReport {
             .and_then(|creds| crate::project::database::live::extract_pg_schema(&creds))
         {
             Ok(schema) => {
-                if let Some(datas_dir) = &config.datas_dir
-                    && let Some(baseline_path) = crate::report::export_json::find_latest_baseline(
-                        datas_dir,
-                        &config.brand_prefix,
-                    )
+                if let Some(baseline_path) = find_baseline(config)
                     && let Ok(baseline) = crate::report::export_json::load_export(&baseline_path)
                     && let Some(baseline_schema) = baseline.database_schema
                 {
@@ -2050,8 +2112,7 @@ pub fn run_scan(config: &ScanConfig) -> ScanReport {
     let mut comparison = None;
     let mut export_path = None;
     if let Some(datas_dir) = &config.datas_dir {
-        if let Some(baseline_path) =
-            crate::report::export_json::find_latest_baseline(datas_dir, &config.brand_prefix)
+        if let Some(baseline_path) = find_baseline(config)
             && let Ok(baseline) = crate::report::export_json::load_export(&baseline_path)
         {
             comparison = Some(crate::report::comparison::compare_with_baseline(
@@ -2200,6 +2261,43 @@ mod tests {
         let path = root.join(rel);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, content).unwrap();
+    }
+
+    /// Ticket #133: the current history wins, the pre-#133 location is
+    /// only a fallback, and no history directory means no baseline.
+    #[test]
+    fn test_find_baseline_prefers_current_then_legacy() {
+        let root = temp_dir();
+        let current = root.join("audit-reports/audit-datas");
+        let legacy = root.join("docs/audit-reports/audit-datas");
+        std::fs::create_dir_all(&current).unwrap();
+        let mut config = ScanConfig {
+            root: root.clone(),
+            datas_dir: Some(current.clone()),
+            legacy_datas_dir: Some(legacy.clone()),
+            ..ScanConfig::default()
+        };
+
+        let none_anywhere = find_baseline(&config);
+        write(&legacy, "SCA-DATA-2000-01-01-00-00.json", "{}");
+        let from_legacy = find_baseline(&config);
+        write(&current, "SCA-DATA-2026-01-01-00-00.json", "{}");
+        write(&current, "SCA-DATA-2026-02-01-00-00.json", "{}");
+        let from_current = find_baseline(&config);
+        config.datas_dir = None;
+        let history_disabled = find_baseline(&config);
+        std::fs::remove_dir_all(&root).ok();
+
+        assert_eq!(none_anywhere, None);
+        assert_eq!(
+            from_legacy,
+            Some(legacy.join("SCA-DATA-2000-01-01-00-00.json"))
+        );
+        assert_eq!(
+            from_current,
+            Some(current.join("SCA-DATA-2026-02-01-00-00.json"))
+        );
+        assert_eq!(history_disabled, None);
     }
 
     fn finding(rule_key: &str, category: &str, file: &str, line: usize) -> ReportFinding {
@@ -2916,11 +3014,9 @@ mod tests {
         write_two_category_rules(&rules_dir);
         write(&root, "app.py", "x = 1\n");
 
-        // With no optional phase: N = 8 (rules, phase A, phase B, phase
-        // C × 5 languages/engines [Python/Java/JS-TS/PHP/C#] — mirrors
-        // `_compute_phase_total`, which excludes these always-run
-        // phases from its own count). Went from 7 to 8 in ticket #79
-        // when wiring up the C# taint engine.
+        // Python-only project, no optional phase: N = 4 (rules, phase
+        // A, phase B, phase C - Python). Until ticket #134 the five
+        // phase C passes always ran, N = 8 whatever the languages.
         CAPTURED.lock().unwrap().clear();
         let config = ScanConfig {
             root: root.clone(),
@@ -2930,15 +3026,35 @@ mod tests {
         };
         run_scan(&config);
         let labels = CAPTURED.lock().unwrap().clone();
-        assert_eq!(
-            labels.len(),
-            8,
-            "8 phases de base attendues, obtenu {labels:?}"
+        assert_eq!(labels.len(), 4, "4 phases expected, got {labels:?}");
+        assert!(labels[0].starts_with("[1/4] "), "{:?}", labels[0]);
+        assert!(
+            labels[3].starts_with("[4/4] phase C - Python"),
+            "{:?}",
+            labels[3]
         );
-        assert!(labels[0].starts_with("[1/8] "), "{:?}", labels[0]);
-        assert!(labels[7].starts_with("[8/8] "), "{:?}", labels[7]);
 
-        // With `with_deps` enabled: N = 9, the 9th phase carries the
+        // Adding a Java and a TypeScript file adds exactly their two
+        // passes (TypeScript shares the JS/TS pass): N = 6, and no PHP
+        // or C# pass is displayed.
+        write(&root, "App.java", "class App {}\n");
+        write(&root, "app.ts", "const x = 1;\n");
+        CAPTURED.lock().unwrap().clear();
+        run_scan(&config);
+        let labels_multi = CAPTURED.lock().unwrap().clone();
+        assert_eq!(labels_multi.len(), 6, "{labels_multi:?}");
+        assert!(labels_multi.iter().any(|l| l.contains("phase C - Java")));
+        assert!(labels_multi.iter().any(|l| l.contains("phase C - JS/TS")));
+        assert!(
+            !labels_multi
+                .iter()
+                .any(|l| l.contains("phase C - PHP") || l.contains("phase C - C#")),
+            "{labels_multi:?}"
+        );
+        std::fs::remove_file(root.join("App.java")).unwrap();
+        std::fs::remove_file(root.join("app.ts")).unwrap();
+
+        // With `with_deps` enabled: N = 5, the last phase carries the
         // label dedicated to dependencies.
         write(&root, "requirements.txt", "flask\n");
         CAPTURED.lock().unwrap().clear();
@@ -2950,13 +3066,13 @@ mod tests {
         let labels_with_deps = CAPTURED.lock().unwrap().clone();
         assert_eq!(
             labels_with_deps.len(),
-            9,
-            "9 phases attendues avec with_deps, obtenu {labels_with_deps:?}"
+            5,
+            "5 phases expected with with_deps, got {labels_with_deps:?}"
         );
         assert!(
-            labels_with_deps[8].starts_with("[9/9] dépendances"),
+            labels_with_deps[4].starts_with("[5/5] dépendances"),
             "{:?}",
-            labels_with_deps[8]
+            labels_with_deps[4]
         );
 
         std::fs::remove_dir_all(&root).ok();
@@ -2981,6 +3097,7 @@ mod tests {
         write(&root, "app2.py", "y = 2\n");
         write(&root, "Main.java", "class Main {}\n");
 
+        // N = 5: rules, A, B, phase C Python and Java only (ticket #134).
         CAPTURED.lock().unwrap().clear();
         let config = ScanConfig {
             root: root.clone(),
@@ -2996,7 +3113,7 @@ mod tests {
             .unwrap_or_else(|| panic!("aucun libellé de phase A trouvé parmi {labels:?}"));
 
         assert!(
-            phase_a_label.starts_with("[2/8] phase A (lecture + parsing)"),
+            phase_a_label.starts_with("[2/5] phase A (lecture + parsing)"),
             "le préfixe [n/N] et le libellé existant doivent rester intacts : {phase_a_label:?}"
         );
         assert!(
@@ -3045,7 +3162,7 @@ mod tests {
             .unwrap_or_else(|| panic!("aucun libellé de phase A trouvé parmi {labels:?}"));
 
         assert!(
-            phase_a_label.starts_with("[2/8] Phase A (Einlesen + Parsen)"),
+            phase_a_label.starts_with("[2/4] Phase A (Einlesen + Parsen)"),
             "le libellé de phase A doit être traduit en allemand : {phase_a_label:?}"
         );
         assert!(

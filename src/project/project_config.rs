@@ -41,6 +41,17 @@ const EXCLUDED_DIRS: &[&str] = &[
     ".pytest_cache",
 ];
 
+/// The engine's own output directories (reports, JSON history),
+/// skipped by the detection walk on top of `EXCLUDED_DIRS` (ticket
+/// #132): an HTML report from a previous scan made the prompt list
+/// `html` among the project's languages. Kept apart from
+/// `EXCLUDED_DIRS` so the `exclude` list written to `audit.config.json`
+/// stays the Python one; the scan itself excludes these directories
+/// through `main.rs::DEFAULT_EXCLUDES`, which now always applies.
+const ENGINE_OUTPUT_DIRS: &[&str] = &["audit-reports", "audit-datas"];
+
+/// Result of [`auto_detect_project`]: what the interactive prompt
+/// proposes to write into `audit.config.json`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DetectedProjectInfo {
     pub languages: Vec<String>,
@@ -97,7 +108,10 @@ fn walk_detect(
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().into_owned();
         if path.is_dir() {
-            if EXCLUDED_DIRS.contains(&name.as_str()) || name.starts_with('.') {
+            if EXCLUDED_DIRS.contains(&name.as_str())
+                || ENGINE_OUTPUT_DIRS.contains(&name.as_str())
+                || name.starts_with('.')
+            {
                 continue;
             }
             walk_detect(root, &path, languages, top_level_dirs, has_root_level_files);
@@ -136,17 +150,53 @@ fn language_label(lang: SourceLanguage) -> &'static str {
     }
 }
 
+/// Single reader of `audit.config.json` at the project root, shared by
+/// every `read_*_config` function of this module (ticket #137).
+///
+/// - `Ok(None)`: no file — the only case where the caller may offer to
+///   create one.
+/// - `Ok(Some(json))`: the parsed file. A leading UTF-8 BOM is skipped:
+///   Windows Notepad and PowerShell `Out-File` write one, and
+///   `serde_json` rejects it, which made the whole file silently
+///   ignored. Deliberate deviation from Python, whose
+///   `json.load(open(...))` also fails on a BOM.
+/// - `Err(message)`: the file exists but cannot be read or is not valid
+///   JSON. The caller must say so, never treat it as absent: treating it
+///   as absent offered to create the file and overwrote the user's
+///   configuration.
+pub fn load_config_json(root: &Path) -> Result<Option<serde_json::Value>, String> {
+    let path = root.join("audit.config.json");
+    let content = match std::fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e.to_string()),
+    };
+    let content = content.strip_prefix('\u{feff}').unwrap_or(&content);
+    serde_json::from_str(content)
+        .map(Some)
+        .map_err(|e| e.to_string())
+}
+
+/// The parsed `audit.config.json`, or `None` when it is absent or
+/// invalid — for the readers of optional sections, where both cases fall
+/// back to the defaults (the invalid case is reported once, by the
+/// caller of [`load_config_json`]).
+fn config_json(root: &Path) -> Option<serde_json::Value> {
+    load_config_json(root).ok().flatten()
+}
+
 /// Reads `paths.include`/`paths.exclude` from an existing
-/// `audit.config.json` at the project root. `None` if the file is absent,
-/// unreadable, or not valid JSON — in all these cases,
-/// the caller falls back to auto-detection or the defaults.
+/// `audit.config.json` at the project root. `None` only if the file is
+/// absent or invalid. A valid file without a `paths` section (or without
+/// one of its two keys) returns empty lists, which the caller replaces by
+/// the defaults: until ticket #137, a missing `paths` section made the
+/// file look absent.
 pub fn read_paths_config(root: &Path) -> Option<(Vec<String>, Vec<String>)> {
-    let content = std::fs::read_to_string(root.join("audit.config.json")).ok()?;
-    let json: serde_json::Value = serde_json::from_str(&content).ok()?;
-    let paths = json.get("paths")?;
+    let json = config_json(root)?;
+    let paths = json.get("paths");
     let as_string_vec = |key: &str| -> Vec<String> {
         paths
-            .get(key)
+            .and_then(|p| p.get(key))
             .and_then(|v| v.as_array())
             .map(|a| {
                 a.iter()
@@ -173,10 +223,7 @@ pub fn read_paths_config(root: &Path) -> Option<(Vec<String>, Vec<String>)> {
 /// that resolution lives in the caller (`main.rs::run_scan_command`),
 /// this module only reads.
 pub fn read_disabled_rules_config(root: &Path) -> Vec<String> {
-    let Ok(content) = std::fs::read_to_string(root.join("audit.config.json")) else {
-        return Vec::new();
-    };
-    let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) else {
+    let Some(json) = config_json(root) else {
         return Vec::new();
     };
     json.get("rules")
@@ -218,10 +265,7 @@ fn normalize_category_name(name: &str) -> String {
 /// "enabled by default" (`true`), not as "disabled", exactly
 /// like `enabled_categories.get(cat_key, True)` on the Python side.
 pub fn read_category_overrides_config(root: &Path) -> BTreeMap<String, bool> {
-    let Ok(content) = std::fs::read_to_string(root.join("audit.config.json")) else {
-        return BTreeMap::new();
-    };
-    let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) else {
+    let Some(json) = config_json(root) else {
         return BTreeMap::new();
     };
     let Some(categories) = json.get("categories").and_then(|v| v.as_object()) else {
@@ -261,10 +305,7 @@ pub fn read_category_overrides_config(root: &Path) -> BTreeMap<String, bool> {
 /// without a confidence filter (already existing behavior, unchanged),
 /// only the threshold becomes configurable.
 pub fn read_max_high_threshold_config(root: &Path) -> i64 {
-    let Ok(content) = std::fs::read_to_string(root.join("audit.config.json")) else {
-        return 0;
-    };
-    let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) else {
+    let Some(json) = config_json(root) else {
         return 0;
     };
     json.get("thresholds")
@@ -296,10 +337,7 @@ const UNSUPPORTED_CONFIG_SECTIONS: &[&str] = &[
 /// message listing all the offending keys). Empty if the file is
 /// absent, unreadable, invalid, or contains only supported keys.
 pub fn unsupported_config_sections(root: &Path) -> Vec<String> {
-    let Ok(content) = std::fs::read_to_string(root.join("audit.config.json")) else {
-        return Vec::new();
-    };
-    let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) else {
+    let Some(json) = config_json(root) else {
         return Vec::new();
     };
     let Some(top_level) = json.as_object() else {
@@ -340,7 +378,15 @@ pub fn write_audit_config_json(
     });
     let mut text = serde_json::to_string_pretty(&json).expect("sérialisation JSON valide");
     text.push('\n');
-    std::fs::write(&path, text)?;
+    // `create_new` (ticket #137): never overwrite an existing file, even
+    // if a caller wrongly concluded it was absent — that is how a user's
+    // configuration used to be replaced by the detected one.
+    use std::io::Write as _;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)?;
+    file.write_all(text.as_bytes())?;
     Ok(path)
 }
 
@@ -352,6 +398,66 @@ mod tests {
         let path = root.join(rel);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, content).unwrap();
+    }
+
+    #[test]
+    fn test_walk_detect_collects_languages_and_top_dirs() {
+        let dir = std::env::temp_dir().join(format!("sast-pc-walk-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        write_file(&dir, "main.py", "x = 1\n");
+        write_file(&dir, "web/app.ts", "let x = 1;\n");
+        write_file(&dir, "web/deep/util.js", "let y = 2;\n");
+        write_file(&dir, "notes.txt", "not code\n");
+        write_file(&dir, "node_modules/pkg/index.js", "x;\n");
+        write_file(&dir, ".git/hooks/pre-commit.py", "x = 1\n");
+        write_file(&dir, "audit-reports/SCA-REPORT-x.html", "<html></html>");
+
+        let mut languages = BTreeSet::new();
+        let mut top_level_dirs = BTreeSet::new();
+        let mut has_root_level_files = false;
+        walk_detect(
+            &dir,
+            &dir,
+            &mut languages,
+            &mut top_level_dirs,
+            &mut has_root_level_files,
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+
+        let languages: Vec<String> = languages.into_iter().collect();
+        assert_eq!(
+            languages,
+            ["javascript", "python", "typescript"].map(String::from)
+        );
+        assert_eq!(
+            top_level_dirs.into_iter().collect::<Vec<_>>(),
+            vec!["web".to_string()]
+        );
+        assert!(has_root_level_files);
+    }
+
+    #[test]
+    fn test_config_json_absent_invalid_and_valid() {
+        let dir = std::env::temp_dir().join(format!("sast-pc-cfgjson-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let absent = config_json(&dir);
+        write_file(&dir, "audit.config.json", "{not json");
+        let invalid = config_json(&dir);
+        write_file(
+            &dir,
+            "audit.config.json",
+            r#"{"thresholds": {"max_high": 2}}"#,
+        );
+        let valid = config_json(&dir);
+        std::fs::remove_dir_all(&dir).unwrap();
+
+        assert_eq!(absent, None);
+        assert_eq!(invalid, None, "invalid falls back like absent");
+        assert_eq!(
+            valid,
+            Some(serde_json::json!({"thresholds": {"max_high": 2}}))
+        );
     }
 
     #[test]
@@ -392,6 +498,95 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// Ticket #137: a file without a `paths` section is present, not
+    /// absent — empty lists (the caller applies the defaults), never
+    /// `None`, which offered to create the file and overwrote it.
+    #[test]
+    fn test_read_paths_config_file_without_paths_section_is_present() {
+        let dir = std::env::temp_dir().join(format!("sast-pc-137a-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        write_file(
+            &dir,
+            "audit.config.json",
+            r#"{"rules": {"disabled": ["x"]}}"#,
+        );
+        assert_eq!(read_paths_config(&dir), Some((Vec::new(), Vec::new())));
+        assert_eq!(read_disabled_rules_config(&dir), vec!["x".to_string()]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Ticket #137: a UTF-8 BOM (Windows Notepad, PowerShell) no longer
+    /// hides the whole file from every reader.
+    #[test]
+    fn test_config_with_utf8_bom_is_read() {
+        let dir = std::env::temp_dir().join(format!("sast-pc-137b-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        write_file(
+            &dir,
+            "audit.config.json",
+            "\u{feff}{\"paths\": {\"include\": [\"app/\"]}, \"thresholds\": {\"max_high\": 3}}",
+        );
+        assert_eq!(
+            read_paths_config(&dir),
+            Some((vec!["app/".to_string()], Vec::new()))
+        );
+        assert_eq!(read_max_high_threshold_config(&dir), 3);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Ticket #137: absent and invalid are told apart, so the caller
+    /// reports an invalid file instead of offering to replace it.
+    #[test]
+    fn test_load_config_json_distinguishes_absent_and_invalid() {
+        let dir = std::env::temp_dir().join(format!("sast-pc-137c-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let absent = load_config_json(&dir);
+        assert_eq!(absent, Ok(None));
+        write_file(
+            &dir,
+            "audit.config.json",
+            r#"{"paths": {"include": ["a/"],}}"#,
+        );
+        let invalid = load_config_json(&dir);
+        assert!(invalid.is_err());
+        assert_eq!(read_paths_config(&dir), None);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Ticket #137: writing never replaces an existing file.
+    #[test]
+    fn test_write_audit_config_json_never_overwrites() {
+        let dir = std::env::temp_dir().join(format!("sast-pc-137d-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        write_file(&dir, "audit.config.json", "{not json");
+        let info = auto_detect_project(&dir);
+        assert!(write_audit_config_json(&dir, &info).is_err());
+        assert_eq!(
+            std::fs::read_to_string(dir.join("audit.config.json")).unwrap(),
+            "{not json"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Ticket #132: the engine's report directories don't feed the
+    /// detected languages (a previous HTML report listed `html`).
+    #[test]
+    fn test_auto_detect_skips_engine_output_dirs() {
+        let dir = std::env::temp_dir().join(format!("sast-pc-132-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        write_file(&dir, "app.py", "x = 1\n");
+        write_file(
+            &dir.join("docs/audit-reports"),
+            "SCA-REPORT-x.html",
+            "<html></html>",
+        );
+        let info = auto_detect_project(&dir);
+        assert_eq!(info.languages, vec!["python".to_string()]);
+        assert_eq!(info.include_paths, vec![".".to_string()]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     #[test]
     fn test_read_paths_config_reads_include_and_exclude() {
         let dir = std::env::temp_dir().join(format!("sast-pc-test4-{}", std::process::id()));
@@ -412,7 +607,8 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("sast-pc-test6-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        assert!(read_disabled_rules_config(&dir).is_empty());
+        let rules = read_disabled_rules_config(&dir);
+        assert!(rules.is_empty());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -425,7 +621,8 @@ mod tests {
             "audit.config.json",
             r#"{"paths": {"include": ["sca/"]}}"#,
         );
-        assert!(read_disabled_rules_config(&dir).is_empty());
+        let rules = read_disabled_rules_config(&dir);
+        assert!(rules.is_empty());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -503,7 +700,8 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("sast-pc-test13-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        assert_eq!(read_max_high_threshold_config(&dir), 0);
+        let threshold = read_max_high_threshold_config(&dir);
+        assert_eq!(threshold, 0);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -538,7 +736,8 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("sast-pc-test16-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        assert!(unsupported_config_sections(&dir).is_empty());
+        let sections = unsupported_config_sections(&dir);
+        assert!(sections.is_empty());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

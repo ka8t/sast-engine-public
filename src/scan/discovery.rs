@@ -162,17 +162,70 @@ pub struct FileDiscoveryConfig {
 /// Discovers files under `root` (project root, used to compute
 /// relative paths) by recursively walking `paths` (paths
 /// relative to `root`). Mirror of `_find_files`.
+///
+/// Deliberate deviation from Python (ticket #138): a start path that names
+/// a file is kept as that single file, through the same extension,
+/// filename and exclusion checks as a file found by the walk (exclusions
+/// still win). Python hands it to `os.walk`, which yields nothing for a
+/// file, so `include: ["src/app.py"]` silently scanned 0 files on both
+/// sides. A missing start path is still skipped here; the CLI warns about
+/// it once per scan (`missing_include_paths` in `main.rs`), since this
+/// function runs once per language pass.
 pub fn find_files(root: &Path, paths: &[&Path], config: &FileDiscoveryConfig) -> Vec<PathBuf> {
     let mut files = Vec::new();
     let mut seen: HashSet<PathBuf> = HashSet::new();
     for start in paths {
         let full_path = root.join(start);
-        if !full_path.exists() {
-            continue;
+        if full_path.is_file() {
+            consider_file(&full_path, root, config, &mut files, &mut seen);
+        } else if full_path.is_dir() {
+            walk_dir(&full_path, root, config, &mut files, &mut seen);
         }
-        walk_dir(&full_path, root, config, &mut files, &mut seen);
     }
     files
+}
+
+/// Keeps `filepath` if it passes the extension/filename filter and no
+/// exclusion matches it, once per scan pass (`seen` deduplicates files
+/// reached through overlapping start paths). Shared by the walk and by
+/// start paths that name a file, so both apply exactly the same rules.
+fn consider_file(
+    filepath: &Path,
+    root: &Path,
+    config: &FileDiscoveryConfig,
+    files: &mut Vec<PathBuf>,
+    seen: &mut HashSet<PathBuf>,
+) {
+    let filename = filepath
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    if !config.extensions.is_empty() || !config.filenames.is_empty() {
+        let matches_extension = config
+            .extensions
+            .iter()
+            .any(|ext| filename.ends_with(ext.as_str()));
+        let matches_filename = config
+            .filenames
+            .iter()
+            .any(|name| filename.eq_ignore_ascii_case(name));
+        if !matches_extension && !matches_filename {
+            return;
+        }
+    }
+    let rel_path = filepath
+        .strip_prefix(root)
+        .unwrap_or(filepath)
+        .to_string_lossy()
+        .replace('\\', "/");
+    if is_excluded(&rel_path, &filename, &config.exclude_patterns) {
+        return;
+    }
+    // `Path` equality compares components, so `src/./app.py` reached from
+    // a `./src` start path and `src/app.py` count as the same file.
+    if seen.insert(filepath.to_path_buf()) {
+        files.push(filepath.to_path_buf());
+    }
 }
 
 fn walk_dir(
@@ -219,34 +272,7 @@ fn walk_dir(
     }
 
     for filepath in &filepaths {
-        let filename = filepath
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_default();
-        if !config.extensions.is_empty() || !config.filenames.is_empty() {
-            let matches_extension = config
-                .extensions
-                .iter()
-                .any(|ext| filename.ends_with(ext.as_str()));
-            let matches_filename = config
-                .filenames
-                .iter()
-                .any(|name| filename.eq_ignore_ascii_case(name));
-            if !matches_extension && !matches_filename {
-                continue;
-            }
-        }
-        let rel_path = filepath
-            .strip_prefix(root)
-            .unwrap_or(filepath)
-            .to_string_lossy()
-            .replace('\\', "/");
-        if is_excluded(&rel_path, &filename, &config.exclude_patterns) {
-            continue;
-        }
-        if seen.insert(filepath.clone()) {
-            files.push(filepath.clone());
-        }
+        consider_file(filepath, root, config, files, seen);
     }
 
     for d in &subdirs {
@@ -385,6 +411,94 @@ mod tests {
         let config = default_config();
         let files = find_files(&root, &[Path::new("does_not_exist")], &config);
         assert!(files.is_empty());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn test_find_files_file_start_path_is_scanned() {
+        let root = temp_project_dir();
+        write_file(&root, "src/app/a.py", "x = 1\n");
+        write_file(&root, "src/b.py", "y = 2\n");
+        let files = find_files(&root, &[Path::new("src/app/a.py")], &default_config());
+        assert_eq!(files, vec![root.join("src/app/a.py")]);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn test_find_files_file_start_path_still_filtered() {
+        // Exclusions win over a file include, and a pass for another
+        // language does not pick the file up.
+        let root = temp_project_dir();
+        write_file(&root, "legacy/old.py", "x = 1\n");
+        write_file(&root, "src/app.js", "y = 2\n");
+        let config = FileDiscoveryConfig {
+            extensions: vec![".py".to_string()],
+            filenames: vec![],
+            exclude_patterns: vec!["legacy/".to_string()],
+            prune_excludes: vec!["legacy/".to_string()],
+        };
+        let starts = [Path::new("legacy/old.py"), Path::new("src/app.js")];
+        assert!(find_files(&root, &starts, &config).is_empty());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn test_find_files_file_and_dir_start_paths_dedup() {
+        let root = temp_project_dir();
+        write_file(&root, "src/app/a.py", "x = 1\n");
+        write_file(&root, "src/b.py", "y = 2\n");
+        let starts = [
+            Path::new("src/app/a.py"),
+            Path::new("./src"),
+            Path::new("src/"),
+            Path::new("src/app/"),
+        ];
+        let files = find_files(&root, &starts, &default_config());
+        assert_eq!(files.len(), 2, "each file once: {files:?}");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn test_consider_file_applies_filter_exclusions_and_dedup() {
+        let root = temp_project_dir();
+        write_file(&root, "src/a.py", "x = 1\n");
+        write_file(&root, "src/a.js", "x = 1\n");
+        write_file(&root, "legacy/old.py", "x = 1\n");
+        let config = FileDiscoveryConfig {
+            extensions: vec![".py".to_string()],
+            filenames: vec![],
+            exclude_patterns: vec!["legacy/".to_string()],
+            prune_excludes: vec![],
+        };
+        let mut files = Vec::new();
+        let mut seen = HashSet::new();
+        for rel in ["src/a.py", "src/a.js", "legacy/old.py", "src/./a.py"] {
+            consider_file(&root.join(rel), &root, &config, &mut files, &mut seen);
+        }
+        assert_eq!(files, vec![root.join("src/a.py")]);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn test_walk_dir_sorted_files_before_subdirs_and_prunes() {
+        let root = temp_project_dir();
+        write_file(&root, "b.py", "x\n");
+        write_file(&root, "a.py", "x\n");
+        write_file(&root, "sub/c.py", "x\n");
+        write_file(&root, "vendor/d.py", "x\n");
+        let config = FileDiscoveryConfig {
+            extensions: vec![".py".to_string()],
+            filenames: vec![],
+            exclude_patterns: vec![],
+            prune_excludes: vec!["vendor/".to_string()],
+        };
+        let mut files = Vec::new();
+        let mut seen = HashSet::new();
+        walk_dir(&root, &root, &config, &mut files, &mut seen);
+        assert_eq!(
+            files,
+            vec![root.join("a.py"), root.join("b.py"), root.join("sub/c.py")]
+        );
         std::fs::remove_dir_all(&root).ok();
     }
 
