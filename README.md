@@ -4,11 +4,11 @@ Security scanner for source code by [CodeFixture](https://codefixture.com). It a
 
 This repository holds the complete engine and a sample of its detection rules. To build and run it, follow [`INSTALLATION.md`](INSTALLATION.md).
 
-The rules are plain `.sca` files read at each scan, only for the languages of the scanned project: see [Choosing the languages checked](INSTALLATION.md#choosing-the-languages-checked).
+The sample rules are plain `.sca` files: the engine you build uses them at once. Each scan keeps only the rules of the scanned project's languages: see [Choosing the languages checked](INSTALLATION.md#choosing-the-languages-checked).
 
 ## Full rule catalog
 
-The sample covers a small part of what the engine detects. The full catalog has more than 700 rules and is available from [CodeFixture](https://codefixture.com), with its updates.
+The sample covers a small part of what the engine detects. The full catalog has more than 700 rules and is available from [CodeFixture](https://codefixture.com), with its updates, as a rule pack encrypted for your key: see [Installing the full rule catalog](INSTALLATION.md#installing-the-full-rule-catalog).
 
 ## License
 

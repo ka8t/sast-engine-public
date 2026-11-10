@@ -72,7 +72,7 @@ Versions before November 2026 wrote to `docs/audit-reports/`. The first scan aft
 
 ## Choosing the languages checked
 
-The rules are plain `.sca` files, one folder per language. `cargo build` copies them from `rules/builtin` to `target/release/rules/`, next to the engine, and every scan reads them there. A scan reads only the rules of the project's languages, set by `languages` in the project's `audit.config.json`:
+The demo rules are plain `.sca` files, one folder per language. `cargo build` copies them from `rules/builtin` to `target/release/rules/`, next to the engine, and every scan reads them there. A scan keeps only the rules of the project's languages, set by `languages` in the project's `audit.config.json`:
 
 ```json
 { "languages": ["python", "javascript"], "paths": { "include": ["src/"] } }
@@ -81,18 +81,27 @@ The rules are plain `.sca` files, one folder per language. `cargo build` copies 
 - Accepted values: `python`, `java`, `javascript`, `typescript` (same rules as `javascript`), `php`, `csharp`, `html`, `yaml`, `dockerfile`. The Dockerfile rules are always added.
 - Without `languages`, the scan reads the rules of the languages of the files it finds.
 - On the first run in a terminal, the engine offers to create `audit.config.json` with the languages it detects. If you later add code in another language, add it to `languages`: until then, its files are checked by no rule, and every scan says so in a warning.
-- Each scan prints the languages whose rules it read (`--quiet` hides this line, not the warnings).
+
+Each scan then prints what it loaded (`--quiet` hides these lines, not the warnings):
+
+```text
+[sast-engine] Rules: 305/708 file(s) kept for the project's languages, in /path/to/target/release/rules
+[sast-engine]   pack acme.scapack (official, signed by CodeFixture): 708 rule file(s)
+[sast-engine] 303 rule(s) loaded for languages: java, javascript
+```
 
 ## Installing the full rule catalog
 
-You receive `rules-full.tar.gz` from CodeFixture. From the folder of this repository:
+You receive two files from CodeFixture: a rule pack, `<name>.scapack`, encrypted for you and signed, and your key file, `sast-engine.key`.
 
-```bash
-rm -rf rules/builtin
-tar -xzmf /path/to/rules-full.tar.gz
-cargo build --release
-```
+1. Copy the pack into `target/release/rules/`, next to the engine. Builds never remove it.
+2. Copy `sast-engine.key` next to the engine, in `target/release/`. You can instead pass it with `--key-file /path/to/sast-engine.key`, or put its content in the `SAST_ENGINE_KEY` environment variable.
+3. Run `sast-engine rules key`: it prints your client name and the key fingerprint, never the key.
 
-On Windows, replace the first line with `Remove-Item -Recurse -Force rules\builtin`. Repeat these steps for each rule update.
+The next scan shows the pack on its `pack` line. Without the right key, the scan says which pack needs another key and keeps the demo rules. For a rule update, replace the pack with the new one.
 
-Always install the catalog in `rules/builtin`, not in `target/release/rules/`: each build empties that folder and copies `rules/builtin` into it again.
+`cargo clean` deletes `target/` with everything in it, your pack and key included. Keep a copy elsewhere, or keep them out of `target/` and point the engine at them with `--rules` and `--key-file`.
+
+## Writing your own rules
+
+Put your own `.sca` files in `~/.sast-engine/custom-rules/` (`%USERPROFILE%\.sast-engine\custom-rules\` on Windows), one folder per language as in `rules/builtin`. Every scan loads them in addition to the catalog, and the report labels their findings as your own rules. No build, update or `cargo clean` touches that folder. `--custom-rules-dir` points to another one.

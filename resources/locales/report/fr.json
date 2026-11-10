@@ -3264,6 +3264,7 @@
   "taint_badge_traced": "Tracé",
   "taint_badge_builtin": "Builtin",
   "taint_badge_custom": "Custom",
+  "taint_badge_official": "Officielle",
   "suppress_button_title": "Supprimer ce finding",
   "suppress_download": "Telecharger",
   "suppress_copy": "Copier",

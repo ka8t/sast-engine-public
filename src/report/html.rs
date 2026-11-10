@@ -105,8 +105,9 @@ fn language_severity_data(findings: &[ReportFinding]) -> Value {
 /// Taint chart data — port of `_get_taint_chart_data`.
 /// `builtin_loaded`/`custom_loaded`: `_rule_engine_stats` doesn't
 /// exist on the AuditRust side — approximated by the size of the
-/// loaded rule catalog. The chart has one slice for the catalog's rules
-/// (`json_builtin`) and one for the client's (`json_custom`).
+/// loaded rule catalog. Official CodeFixture rules (`json_official`,
+/// ADR-0037) are counted with `json_builtin`: the chart has one slice for
+/// the editor's rules and one for the client's (`json_custom`).
 fn taint_chart_data(findings: &[ReportFinding], rule_catalog: &BTreeMap<String, Value>) -> Value {
     let taint_findings: Vec<&ReportFinding> =
         findings.iter().filter(|f| f.taint_flow.is_some()).collect();
@@ -123,7 +124,10 @@ fn taint_chart_data(findings: &[ReportFinding], rule_catalog: &BTreeMap<String, 
     by_source.insert("json_builtin".to_string(), json!(0));
     by_source.insert("json_custom".to_string(), json!(0));
     for f in findings {
-        let source = f.rule_source.as_str();
+        let source = match f.rule_source.as_str() {
+            "json_official" => "json_builtin",
+            other => other,
+        };
         if let Some(c) = by_source.get(source).and_then(|v| v.as_u64()) {
             by_source.insert(source.to_string(), json!(c + 1));
         }
