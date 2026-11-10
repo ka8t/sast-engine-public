@@ -70,6 +70,19 @@ Every scan writes into the scanned folder, under `audit-reports/`. The terminal 
 
 Versions before November 2026 wrote to `docs/audit-reports/`. The first scan after the upgrade still compares with the last export found there, then writes only to `audit-reports/`. You can delete the old folder afterwards.
 
+## Choosing the languages checked
+
+The rules are plain `.sca` files, one folder per language. `cargo build` copies them from `rules/builtin` to `target/release/rules/`, next to the engine, and every scan reads them there. A scan reads only the rules of the project's languages, set by `languages` in the project's `audit.config.json`:
+
+```json
+{ "languages": ["python", "javascript"], "paths": { "include": ["src/"] } }
+```
+
+- Accepted values: `python`, `java`, `javascript`, `typescript` (same rules as `javascript`), `php`, `csharp`, `html`, `yaml`, `dockerfile`. The Dockerfile rules are always added.
+- Without `languages`, the scan reads the rules of the languages of the files it finds.
+- On the first run in a terminal, the engine offers to create `audit.config.json` with the languages it detects. If you later add code in another language, add it to `languages`: until then, its files are checked by no rule, and every scan says so in a warning.
+- Each scan prints the languages whose rules it read (`--quiet` hides this line, not the warnings).
+
 ## Installing the full rule catalog
 
 You receive `rules-full.tar.gz` from CodeFixture. From the folder of this repository:
@@ -81,3 +94,5 @@ cargo build --release
 ```
 
 On Windows, replace the first line with `Remove-Item -Recurse -Force rules\builtin`. Repeat these steps for each rule update.
+
+Always install the catalog in `rules/builtin`, not in `target/release/rules/`: each build empties that folder and copies `rules/builtin` into it again.
