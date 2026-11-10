@@ -377,6 +377,66 @@ pub fn read_max_high_threshold_config(root: &Path) -> i64 {
         .unwrap_or(0)
 }
 
+/// The `languages` key of `audit.config.json`, as rule languages
+/// (ADR-0038): the folders of the rule catalog that a scan reads.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LanguagesConfig {
+    /// Rule languages to read, sorted, without duplicates. `typescript`
+    /// becomes `javascript` (TypeScript files run the JavaScript rules);
+    /// `dockerfile` is added to any non-empty list, as on the Python side.
+    pub languages: Vec<String>,
+    /// Values of the key that name no supported language, in file order,
+    /// for a warning. They are ignored.
+    pub unknown: Vec<String>,
+}
+
+/// Reads the `languages` key of `audit.config.json` (ADR-0038). `None`
+/// when the file is absent or invalid, or the key absent or not a list.
+/// An empty `languages` (empty list, or no supported value) means the
+/// same for the scan: it reads the rules of the languages of the files it
+/// finds.
+///
+/// Port of `Audit/sca/runner.py:208` and `sca/rule_engine.py:136`, where
+/// this list decides which rules run and `dockerfile` is always added.
+/// Deliberate deviations from Python: an absent or empty list falls back
+/// to the detected languages instead of stopping the scan
+/// (`sca/config.py:237`), and `typescript`, which the detection writes,
+/// is accepted as `javascript`.
+pub fn read_languages_config(root: &Path) -> Option<LanguagesConfig> {
+    let json = config_json(root)?;
+    let values = json.get("languages")?.as_array()?;
+    let mut languages = BTreeSet::new();
+    let mut unknown = Vec::new();
+    for value in values {
+        let Some(name) = value.as_str() else {
+            unknown.push(value.to_string());
+            continue;
+        };
+        let normalized = name.trim().to_ascii_lowercase();
+        let tag = if normalized == "typescript" {
+            "javascript"
+        } else {
+            normalized.as_str()
+        };
+        match crate::rules::catalog::RULE_LANGUAGES
+            .iter()
+            .find(|known| **known == tag)
+        {
+            Some(known) => {
+                languages.insert(known.to_string());
+            }
+            None => unknown.push(name.to_string()),
+        }
+    }
+    if !languages.is_empty() {
+        languages.insert("dockerfile".to_string());
+    }
+    Some(LanguagesConfig {
+        languages: languages.into_iter().collect(),
+        unknown,
+    })
+}
+
 /// Top-level sections deliberately not supported by
 /// AuditRust as of today — ticket #43/spec #27. CLOSED and
 /// exhaustive list (no heuristic detection of "unknown key", which
@@ -814,6 +874,42 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let threshold = read_max_high_threshold_config(&dir);
         assert_eq!(threshold, 0);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// ADR-0038: `languages` becomes rule languages — `typescript` read
+    /// as `javascript`, `dockerfile` added, unknown values set apart; no
+    /// key, a non-list or no file gives `None`.
+    #[test]
+    fn test_read_languages_config_normalizes_and_reports_unknown() {
+        let dir = std::env::temp_dir().join(format!("sast-pc-langs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(read_languages_config(&dir), None);
+        write_file(
+            &dir,
+            "audit.config.json",
+            r#"{"languages": ["TypeScript", "python", "cobol", "javascript", 3]}"#,
+        );
+        assert_eq!(
+            read_languages_config(&dir),
+            Some(LanguagesConfig {
+                languages: vec![
+                    "dockerfile".to_string(),
+                    "javascript".to_string(),
+                    "python".to_string()
+                ],
+                unknown: vec!["cobol".to_string(), "3".to_string()],
+            })
+        );
+        write_file(&dir, "audit.config.json", r#"{"languages": ["cobol"]}"#);
+        let only_unknown = read_languages_config(&dir).unwrap();
+        assert!(only_unknown.languages.is_empty(), "no dockerfile alone");
+        assert_eq!(only_unknown.unknown, vec!["cobol".to_string()]);
+        write_file(&dir, "audit.config.json", r#"{"languages": "python"}"#);
+        assert_eq!(read_languages_config(&dir), None);
+        write_file(&dir, "audit.config.json", r#"{"paths": {}}"#);
+        assert_eq!(read_languages_config(&dir), None);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

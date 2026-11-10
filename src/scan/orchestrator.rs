@@ -37,7 +37,7 @@
 //! `ast` mode and `hook` rules remain out of scope (cf. `engine::dispatch`).
 #![allow(dead_code)]
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
 use rayon::prelude::*;
@@ -249,41 +249,28 @@ pub struct ScanConfig {
     /// even if they aren't explicitly excluded by
     /// `exclude_patterns` — cf. `project_config.rs`.
     pub include_paths: Vec<String>,
-    /// Directory holding the `.sca` rule files. Ignored if
-    /// `rule_packs_dir` is set.
+    /// Rules folder (ADR-0038): plain `.sca` files laid out by language
+    /// (`<language>/<category>/<rule>.sca`), read file by file at each
+    /// scan — `rules/` next to the executable for the CLI, `--rules <DIR>`
+    /// otherwise. Only the folders of `target_languages` are read.
     pub rules_dir: PathBuf,
-    /// Directory of encrypted rule packs (`*.scapack`, ADR-0037, ticket
-    /// #141) to load the catalog from — `rules/` next to the executable
-    /// for the CLI. `None` by default: rules are read from `rules_dir`
-    /// (`--rules <DIR>` and most tests). Packs are opened and compiled in
-    /// memory, see `rules::catalog`.
-    pub rule_packs_dir: Option<PathBuf>,
-    /// Client key (ADR-0037, ticket #142) used, with the public demo key,
-    /// to open the packs of `rule_packs_dir` — from `sast-engine.key`.
-    /// `None` by default: only packs encrypted with the demo key open.
-    pub client_key: Option<crate::rules::client_key::ClientKey>,
-    /// Custom rules directory, loaded IN ADDITION to the builtin
-    /// catalog (never as a replacement) — ticket #84/spec #82, mirrors
+    /// Rule languages declared by the project (`languages` of
+    /// `audit.config.json`, as rule tags: `typescript` is `javascript`).
+    /// `None`: the languages of the discovered files. With a declared
+    /// list, the rules of an undeclared language are never read, even if
+    /// files of that language are found; `ScanReport::undeclared_languages`
+    /// names them so the CLI can say so.
+    pub target_languages: Option<Vec<String>>,
+    /// Custom rules directory, loaded IN ADDITION to the catalog of
+    /// `rules_dir` (never as a replacement) — ticket #84/spec #82, mirrors
     /// `_load_custom_rules`/`{SCRIPT_DIR}/custom-rules/` on the
-    /// Python side (`rule_engine.py:714-731`). `None` (default): unchanged
-    /// behavior, no custom rule consulted. **Ignored if
-    /// `rule_packs_dir` is `None`**: `--rules <DIR>` (explicit
-    /// full replacement) stays priority and exclusive, consistent with the
-    /// acceptance criterion of the ticket — a user who explicitly requests
-    /// an isolated test catalog must never see their custom rules
-    /// silently slip in.
+    /// Python side (`rule_engine.py:714-731`). Filtered on the target
+    /// languages like the catalog; its rules are labelled as client rules
+    /// in the report. `None` (default): no custom rule consulted. The CLI
+    /// leaves it `None` with `--rules <DIR>`: a user who explicitly
+    /// requests an isolated test catalog must never see their custom
+    /// rules silently slip in.
     pub custom_rules_dir: Option<PathBuf>,
-    /// Directory of Ed25519-signed rule update packs,
-    /// loaded IN ADDITION to the builtin catalog and the custom rules
-    /// (never as a replacement) — ticket #85/spec #82, hardened mirror
-    /// of `_load_update_packs`/`{SCRIPT_DIR}/rules-updates/` on the
-    /// Python side (`rule_engine.py:357-420`). `None` (default):
-    /// unchanged behavior, no pack consulted. **Ignored if
-    /// `rule_packs_dir` is `None`**, same rule as
-    /// `custom_rules_dir` above: `--rules <DIR>` stays exclusive.
-    /// See `rule_packs.rs` for verification details and the safe
-    /// fallback if no publisher public key was injected at build time.
-    pub rule_updates_dir: Option<PathBuf>,
     /// Path to `.sca-suppress.json`, if it exists.
     pub suppress_file: Option<PathBuf>,
     /// Exclusion patterns (glob/directory/extension, cf. `discovery`).
@@ -413,10 +400,8 @@ impl Default for ScanConfig {
             root: PathBuf::new(),
             include_paths: vec![".".to_string()],
             rules_dir: PathBuf::new(),
-            rule_packs_dir: None,
-            client_key: None,
+            target_languages: None,
             custom_rules_dir: None,
-            rule_updates_dir: None,
             suppress_file: None,
             exclude_patterns: Vec::new(),
             with_tests: false,
@@ -477,10 +462,14 @@ pub struct ScanReport {
     /// robustness of `compute_file_summaries` on the Python side (a broken
     /// rule doesn't stop the others).
     pub rule_errors: Vec<(PathBuf, String)>,
-    /// Valid rule packs skipped because they need a key other than the
-    /// demo key and the client key (ticket #142): path and the
-    /// fingerprint of the key they need. Reported once by the CLI.
-    pub skipped_rule_packs: Vec<(PathBuf, String)>,
+    /// Rule languages whose rules were read (ADR-0038), sorted: the
+    /// declared `target_languages`, or the languages of the discovered
+    /// files.
+    pub rule_languages: Vec<String>,
+    /// Rule languages of discovered files missing from the declared
+    /// `target_languages`, sorted: their files get no rule. Always empty
+    /// without a declared list.
+    pub undeclared_languages: Vec<String>,
     /// Catalog of compiled rules, indexed by id — needed by the
     /// HTML report (`report::html::generate_html`, `fix_before`/
     /// `fix_after` of `report::findings_html::generate_fix_suggestion`).
@@ -635,12 +624,19 @@ fn vulnerable_dependency_findings(
         .collect()
 }
 
-/// Loads and compiles all `.sca` files in a directory, **recursively**
-/// (the real catalog is organized into subfolders by category, e.g.
-/// `python/security/`, `python/arch/`, `python/maintenance/`). An
+/// Loads and compiles the `.sca` files of a rules folder for the rule
+/// languages `languages`, **recursively** (the real catalog is organized
+/// into language then category subfolders, e.g. `python/security/`,
+/// `python/arch/`). ADR-0038: the folder of a language that is not
+/// targeted is never read (`catalog::rule_start_paths`); a file outside
+/// any language folder is read, and its compiled rules are kept only if
+/// their `language` is targeted (a rule without `language` is kept). An
 /// invalid file is reported in `rule_errors` but does not stop the
 /// loading of the others.
-fn load_rules(rules_dir: &Path) -> (Vec<serde_json::Value>, Vec<(PathBuf, String)>) {
+fn load_rules(
+    rules_dir: &Path,
+    languages: &[String],
+) -> (Vec<serde_json::Value>, Vec<(PathBuf, String)>) {
     let mut rules = Vec::new();
     let mut errors = Vec::new();
     let sca_config = FileDiscoveryConfig {
@@ -658,8 +654,14 @@ fn load_rules(rules_dir: &Path) -> (Vec<serde_json::Value>, Vec<(PathBuf, String
     // detected, but it affects which one "wins" the display when
     // several rules merge on the same line (see
     // `integrate_taint_finding`).
-    let mut paths = find_files(rules_dir, &[Path::new(".")], &sca_config);
+    let start_paths = crate::rules::catalog::rule_start_paths(rules_dir, languages);
+    let start_refs: Vec<&Path> = start_paths.iter().map(PathBuf::as_path).collect();
+    let mut paths = find_files(rules_dir, &start_refs, &sca_config);
     paths.sort();
+    let targeted = |rule: &serde_json::Value| match rule.get("language").and_then(|v| v.as_str()) {
+        Some(language) => languages.iter().any(|l| l == language),
+        None => true,
+    };
     for path in paths {
         let Ok(source) = std::fs::read_to_string(&path) else {
             errors.push((path, "lecture impossible".to_string()));
@@ -667,7 +669,7 @@ fn load_rules(rules_dir: &Path) -> (Vec<serde_json::Value>, Vec<(PathBuf, String
         };
         let filename = path.to_string_lossy().to_string();
         match compile_sca_to_json(&source, &filename) {
-            Ok(compiled) => rules.extend(compiled),
+            Ok(compiled) => rules.extend(compiled.into_iter().filter(targeted)),
             Err(e) => errors.push((path, e.to_string())),
         }
     }
@@ -871,15 +873,13 @@ fn taint_finding_to_report(
     }
 }
 
-/// `ReportFinding::rule_source` from the rule's `"origin"` (ADR-0037,
-/// tickets #143/#144, set by `rules::catalog` and for the custom rules
-/// folder): `json_custom` for the client's own rules, `json_official` for
-/// a signed CodeFixture pack, `json_builtin` otherwise (public builtin
-/// catalog, `--rules <DIR>`).
+/// `ReportFinding::rule_source` from the rule's `"origin"` (ticket #143,
+/// set for the custom rules folder): `json_custom` for the client's own
+/// rules, `json_builtin` otherwise (the catalog of `rules_dir`). The
+/// `json_official` value of the signed packs went with them (ADR-0038).
 fn rule_source_of(rule_json: &serde_json::Value) -> &'static str {
     match rule_json.get("origin").and_then(|v| v.as_str()) {
         Some("client") => "json_custom",
-        Some("official") => "json_official",
         _ => "json_builtin",
     }
 }
@@ -1135,6 +1135,32 @@ pub fn run_scan(config: &ScanConfig) -> ScanReport {
     let include_paths: Vec<&Path> = config.include_paths.iter().map(Path::new).collect();
     let files = find_files(&config.root, &include_paths, &discovery_config);
 
+    // ADR-0038: the rule languages of the scan — the project's declared
+    // list, else the languages of the discovered files. The rules of any
+    // other language are never read.
+    let discovered_languages: BTreeSet<String> = files
+        .iter()
+        .filter_map(|f| SourceLanguage::from_path(f))
+        .map(|lang| lang.rule_tag().to_string())
+        .collect();
+    let rule_languages: Vec<String> = match &config.target_languages {
+        Some(declared) => declared
+            .iter()
+            .cloned()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect(),
+        None => discovered_languages.iter().cloned().collect(),
+    };
+    let undeclared_languages: Vec<String> = match &config.target_languages {
+        Some(_) => discovered_languages
+            .iter()
+            .filter(|lang| !rule_languages.contains(lang))
+            .cloned()
+            .collect(),
+        None => Vec::new(),
+    };
+
     // Phase C passes whose language has at least one discovered file
     // (ticket #134): a pass over zero files only cost time (31 ms for
     // Java on a Python-only project) and a meaningless console line.
@@ -1145,6 +1171,14 @@ pub fn run_scan(config: &ScanConfig) -> ScanReport {
         files
             .iter()
             .any(|f| SourceLanguage::from_path(f).is_some_and(|lang| accepted.contains(&lang)))
+    };
+    // ADR-0038: a language whose rules are not read (undeclared in
+    // `audit.config.json`) has no taint rule either, so its pass is skipped.
+    let has_language = |accepted: &[SourceLanguage]| {
+        has_language(accepted)
+            && accepted
+                .iter()
+                .any(|lang| rule_languages.iter().any(|l| l == lang.rule_tag()))
     };
     let taint_python_active = has_language(&[SourceLanguage::Python]);
     let taint_java_active = has_language(&[SourceLanguage::Java]);
@@ -1194,32 +1228,14 @@ pub fn run_scan(config: &ScanConfig) -> ScanReport {
         }
     };
     let t_rules = std::time::Instant::now();
-    let mut skipped_rule_packs: Vec<(PathBuf, String)> = Vec::new();
-    let (mut loaded_rule_jsons, mut rule_errors) = match &config.rule_packs_dir {
-        // Encrypted packs (ADR-0037): packs that cannot be opened are
-        // reported with the invalid rule files, the others still load;
-        // packs for another key are kept apart (`skipped_rule_packs`).
-        Some(packs_dir) => {
-            let client_key = config.client_key.as_ref().map(|k| &k.key);
-            let catalog = crate::rules::catalog::load_catalog(packs_dir, client_key);
-            let (rules, mut errors) = crate::rules::catalog::compile_loaded_catalog(&catalog);
-            skipped_rule_packs = catalog.foreign_packs;
-            let mut pack_errors = catalog.errors;
-            pack_errors.append(&mut errors);
-            (rules, pack_errors)
-        }
-        None => load_rules(&config.rules_dir),
-    };
-    // Custom rules (ticket #84/spec #82): additive, NEVER when
-    // `--rules <DIR>` is explicit (implicit ADR of this ticket — an
-    // isolated test catalog must never see custom rules mixed in
-    // without asking for it).
-    if config.rule_packs_dir.is_some()
-        && let Some(custom_dir) = &config.custom_rules_dir
+    let (mut loaded_rule_jsons, mut rule_errors) = load_rules(&config.rules_dir, &rule_languages);
+    // Custom rules (ticket #84/spec #82): additive, same language filter.
+    // The CLI leaves `custom_rules_dir` empty with `--rules <DIR>`.
+    if let Some(custom_dir) = &config.custom_rules_dir
         && custom_dir.is_dir()
     {
-        let (mut custom_rules, mut custom_errors) = load_rules(custom_dir);
-        // The client's own rules, like an unsigned client pack (#143).
+        let (mut custom_rules, mut custom_errors) = load_rules(custom_dir, &rule_languages);
+        // Labelled as the client's own rules in the report (#143).
         for rule in &mut custom_rules {
             if let Some(obj) = rule.as_object_mut() {
                 obj.insert("origin".to_string(), "client".into());
@@ -1227,20 +1243,6 @@ pub fn run_scan(config: &ScanConfig) -> ScanReport {
         }
         loaded_rule_jsons.extend(custom_rules);
         rule_errors.append(&mut custom_errors);
-    }
-    // Ed25519-signed update packs (ticket #85/spec #82): additive like
-    // the custom rules above — see the doc comment of the
-    // `rule_updates_dir` field and `rule_packs.rs` for the verification
-    // itself (silent safe fallback if no publisher public key was
-    // injected at build time).
-    if config.rule_packs_dir.is_some()
-        && let Some(updates_dir) = &config.rule_updates_dir
-        && updates_dir.is_dir()
-    {
-        let (pack_rules, mut pack_errors) =
-            crate::rules::rule_packs::load_update_packs(updates_dir);
-        loaded_rule_jsons.extend(pack_rules);
-        rule_errors.append(&mut pack_errors);
     }
     record_phase(
         &phase_label(
@@ -2246,7 +2248,8 @@ pub fn run_scan(config: &ScanConfig) -> ScanReport {
         files_scanned: parsed_files.len(),
         total_loc,
         rule_errors,
-        skipped_rule_packs,
+        rule_languages,
+        undeclared_languages,
         rule_catalog,
         test_results,
         dependency_stats,
@@ -2751,15 +2754,12 @@ mod tests {
         std::fs::remove_dir_all(&root).ok();
     }
 
-    // === Additive custom rules (ticket #84/spec #82) — `use_embedded_
-    // rules: true` needed for these tests: the `custom_rules_dir`
-    // merge happens ONLY in this mode (never with an explicit
-    // `--rules <DIR>`, see the field's doc comment in `ScanConfig`),
-    // so proving the additive behavior necessarily goes through the
-    // real embedded catalog rather than a fixture `rules_dir`. ===
+    // === Additive custom rules (ticket #84/spec #82): loaded on top of
+    // the real catalog. Their exclusion with `--rules <DIR>` is decided by
+    // the CLI (`main.rs::resolve_custom_rules_dir`). ===
 
     #[test]
-    fn test_custom_rules_loaded_additively_with_embedded_catalog() {
+    fn test_custom_rules_loaded_additively_with_real_catalog() {
         let root = temp_dir();
         let custom_dir = root.join("custom-rules");
         write(
@@ -2775,7 +2775,7 @@ mod tests {
 
         let config = ScanConfig {
             root: root.clone(),
-            rule_packs_dir: Some(crate::rules::catalog::test_packs_dir()),
+            rules_dir: crate::rules::catalog::builtin_rules_dir(),
             custom_rules_dir: Some(custom_dir),
             ..ScanConfig::default()
         };
@@ -2860,7 +2860,7 @@ mod tests {
         assert_eq!(SourceLanguage::from_path(Path::new("a.txt")), None);
     }
 
-    /// End-to-end on the embedded catalog: the Vue/Svelte XSS rules fire
+    /// End-to-end on the real catalog: the Vue/Svelte XSS rules fire
     /// (Python fixtures `sample_vue_xss.vue`/`sample_svelte_xss.svelte`),
     /// and a `.tsx` file is scanned with a JSX-capable grammar.
     #[test]
@@ -2879,7 +2879,7 @@ mod tests {
         );
         let config = ScanConfig {
             root: root.clone(),
-            rule_packs_dir: Some(crate::rules::catalog::test_packs_dir()),
+            rules_dir: crate::rules::catalog::builtin_rules_dir(),
             ..ScanConfig::default()
         };
         let report = run_scan(&config);
@@ -2901,7 +2901,7 @@ mod tests {
     /// `context-N` multi-line match (DOTALL, fix 2026-11-04): mirrors the
     /// Python fixture `secret_logged.py:17` that Rust used to miss.
     #[test]
-    fn test_context_scope_matches_across_lines_on_embedded_catalog() {
+    fn test_context_scope_matches_across_lines_on_real_catalog() {
         let root = temp_dir();
         write(
             &root,
@@ -2910,7 +2910,7 @@ mod tests {
         );
         let config = ScanConfig {
             root: root.clone(),
-            rule_packs_dir: Some(crate::rules::catalog::test_packs_dir()),
+            rules_dir: crate::rules::catalog::builtin_rules_dir(),
             ..ScanConfig::default()
         };
         let report = run_scan(&config);
@@ -2929,111 +2929,103 @@ mod tests {
         std::fs::remove_dir_all(&root).ok();
     }
 
+    /// Writes one Python and one Java rule in their language folders, as
+    /// the real catalog does (ADR-0038).
+    fn write_language_rules(rules_dir: &Path) {
+        write(
+            rules_dir,
+            "python/security/py_marker.sca",
+            "rule py_marker\n  language  python\n  category  security\n  severity  HIGH\n  match\n    pattern  MARKER\n    scope    line\n  end\nend\n",
+        );
+        write(
+            rules_dir,
+            "java/security/java_marker.sca",
+            "rule java_marker\n  language  java\n  category  security\n  severity  HIGH\n  match\n    pattern  MARKER\n    scope    line\n  end\nend\n",
+        );
+    }
+
+    /// ADR-0038: without a declared list, the rules read are those of the
+    /// languages of the discovered files — a Java rule is never loaded
+    /// for a Python-only project.
     #[test]
-    fn test_custom_rules_dir_ignored_when_rules_dir_explicit() {
-        // `--rules <DIR>` (rule_packs_dir: None): custom_rules_dir
-        // must NEVER be consulted, even if it is set.
+    fn test_rules_read_for_detected_languages_only() {
         let root = temp_dir();
         let rules_dir = root.join("rules");
-        std::fs::create_dir_all(&rules_dir).unwrap();
-        write_two_category_rules(&rules_dir);
-        let custom_dir = root.join("custom-rules");
-        write(
-            &custom_dir,
-            "my_custom_rule.sca",
-            "rule my_custom_rule\n  language  python\n  category  security\n  severity  HIGH\n  match\n    pattern  MY_CUSTOM_MARKER\n    scope    line\n  end\nend\n",
-        );
-        write(
-            &root,
-            "app.py",
-            "def f():\n    x = eval(y)\nMY_CUSTOM_MARKER\n",
-        );
-
+        write_language_rules(&rules_dir);
+        write(&root, "src/app.py", "MARKER = 1\n");
         let config = ScanConfig {
             root: root.clone(),
+            include_paths: vec!["src".to_string()],
+            rules_dir,
+            ..ScanConfig::default()
+        };
+        let report = run_scan(&config);
+        assert_eq!(report.rule_languages, vec!["python".to_string()]);
+        assert!(report.undeclared_languages.is_empty());
+        assert!(report.rule_catalog.contains_key("py_marker"));
+        assert!(!report.rule_catalog.contains_key("java_marker"));
+        assert!(report.findings.iter().any(|f| f.rule_key == "py_marker"));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// ADR-0038: a declared list wins over the files found. A Java file of
+    /// an undeclared language gets no rule and is reported; a rule placed
+    /// outside any language folder is still filtered on its `language`.
+    #[test]
+    fn test_declared_languages_restrict_rules_and_report_undeclared() {
+        let root = temp_dir();
+        let rules_dir = root.join("rules");
+        write_language_rules(&rules_dir);
+        write(
+            &rules_dir,
+            "extra/java_flat.sca",
+            "rule java_flat\n  language  java\n  category  security\n  severity  HIGH\n  match\n    pattern  MARKER\n    scope    line\n  end\nend\n",
+        );
+        write(&root, "src/app.py", "MARKER = 1\n");
+        write(&root, "src/App.java", "class App { int MARKER = 1; }\n");
+        let config = ScanConfig {
+            root: root.clone(),
+            include_paths: vec!["src".to_string()],
+            rules_dir,
+            target_languages: Some(vec!["python".to_string()]),
+            ..ScanConfig::default()
+        };
+        let report = run_scan(&config);
+        assert_eq!(report.rule_languages, vec!["python".to_string()]);
+        assert_eq!(report.undeclared_languages, vec!["java".to_string()]);
+        assert!(report.rule_catalog.contains_key("py_marker"));
+        assert!(!report.rule_catalog.contains_key("java_marker"));
+        assert!(!report.rule_catalog.contains_key("java_flat"));
+        assert!(report.findings.iter().all(|f| f.file != "src/App.java"));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// ADR-0038: custom rules go through the same language filter and are
+    /// labelled as client rules.
+    #[test]
+    fn test_custom_rules_filtered_on_target_languages() {
+        let root = temp_dir();
+        let rules_dir = root.join("rules");
+        write_two_category_rules(&rules_dir);
+        let custom_dir = root.join("custom-rules");
+        write_language_rules(&custom_dir);
+        write(&root, "src/app.py", "MARKER = 1\n");
+        let config = ScanConfig {
+            root: root.clone(),
+            include_paths: vec!["src".to_string()],
             rules_dir,
             custom_rules_dir: Some(custom_dir),
             ..ScanConfig::default()
         };
         let report = run_scan(&config);
-        assert!(
-            report
-                .findings
-                .iter()
-                .all(|f| f.rule_key != "my_custom_rule"),
-            "custom_rules_dir ne doit jamais être consulté quand --rules est explicite"
-        );
-        std::fs::remove_dir_all(&root).ok();
-    }
-
-    // === Signed update packs (ticket #85/spec #82) — the cryptographic
-    // verification itself (valid/tampered/unsigned pack) is tested in
-    // `rule_packs.rs`, with an explicit test key: no injection happens
-    // at build time during `cargo test`, so these tests here can only
-    // prove the WIRING (safe fallback, `--rules` exclusivity), not the
-    // content of an actually loaded pack. ===
-
-    #[test]
-    fn test_rule_updates_dir_without_editor_key_loads_nothing_and_does_not_crash() {
-        let root = temp_dir();
-        let updates_dir = root.join("rules-updates");
-        write(
-            &updates_dir,
-            "cve-pack/rules/pack_rule.sca",
-            "rule pack_rule\n  language  python\n  category  security\n  severity  HIGH\n  match\n    pattern  MY_CUSTOM_MARKER\n    scope    line\n  end\nend\n",
-        );
-        write(
-            &updates_dir,
-            "cve-pack/manifest.json",
-            r#"{"pack_id": "cve-pack", "rules": [], "signature": "base64:bogus"}"#,
-        );
-        write(&root, "app.py", "MY_CUSTOM_MARKER\n");
-
-        let config = ScanConfig {
-            root: root.clone(),
-            rule_packs_dir: Some(crate::rules::catalog::test_packs_dir()),
-            rule_updates_dir: Some(updates_dir),
-            ..ScanConfig::default()
-        };
-        let report = run_scan(&config);
-        assert!(
-            report.findings.iter().all(|f| f.rule_key != "pack_rule"),
-            "a pack whose signature does not verify must never be loaded"
-        );
-        std::fs::remove_dir_all(&root).ok();
-    }
-
-    #[test]
-    fn test_rule_updates_dir_ignored_when_rules_dir_explicit() {
-        let root = temp_dir();
-        let rules_dir = root.join("rules");
-        std::fs::create_dir_all(&rules_dir).unwrap();
-        write_two_category_rules(&rules_dir);
-        let updates_dir = root.join("rules-updates");
-        write(
-            &updates_dir,
-            "cve-pack/manifest.json",
-            r#"{"pack_id": "cve-pack", "rules": []}"#,
-        );
-        write(&root, "app.py", "def f():\n    x = eval(y)\n");
-
-        let config = ScanConfig {
-            root: root.clone(),
-            rules_dir,
-            rule_updates_dir: Some(updates_dir),
-            ..ScanConfig::default()
-        };
-        // `rule_packs_dir: None` (default) — must never attempt to
-        // read `rules-updates/`, so must never fail even with an
-        // incomplete manifest (no "signature" field here).
-        let report = run_scan(&config);
-        assert!(
-            report
-                .rule_errors
-                .iter()
-                .all(|(p, _)| !p.starts_with(root.join("rules-updates"))),
-            "rule_updates_dir ne doit jamais être consulté quand --rules est explicite"
-        );
+        assert!(report.rule_catalog.contains_key("py_marker"));
+        assert!(!report.rule_catalog.contains_key("java_marker"));
+        let custom = report
+            .findings
+            .iter()
+            .find(|f| f.rule_key == "py_marker")
+            .expect("custom Python rule fires");
+        assert_eq!(custom.rule_source, "json_custom");
         std::fs::remove_dir_all(&root).ok();
     }
 
@@ -3177,7 +3169,8 @@ mod tests {
         std::fs::remove_dir_all(&root).ok();
     }
 
-    /// ADR-0037: a rule's `"origin"` decides the finding's `rule_source`.
+    /// A rule's `"origin"` decides the finding's `rule_source`; a former
+    /// `official` origin is no longer special (ADR-0038).
     #[test]
     fn test_rule_source_of_maps_origins() {
         let of = |origin: Option<&str>| {
@@ -3197,7 +3190,7 @@ mod tests {
             mapped,
             [
                 "json_custom",
-                "json_official",
+                "json_builtin",
                 "json_builtin",
                 "json_builtin"
             ]

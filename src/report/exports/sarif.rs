@@ -73,11 +73,10 @@ pub struct ReportFinding {
     /// long as git blame isn't wired up (separate effort, not yet
     /// implemented on the AuditRust side).
     pub committer: Option<String>,
-    /// Where the rule comes from (ADR-0037): "json_builtin" (public
-    /// builtin catalog, `--rules <DIR>`), "json_official" (signed
-    /// CodeFixture pack), "json_custom" (the client's own rules: client
-    /// pack or custom rules folder), "advisory_db" (vulnerable
-    /// dependency).
+    /// Where the rule comes from: "json_builtin" (the rules folder,
+    /// `rules/` next to the executable or `--rules <DIR>`), "json_custom"
+    /// (the client's own rules, custom rules folder), "advisory_db"
+    /// (vulnerable dependency).
     pub rule_source: String,
 }
 
