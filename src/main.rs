@@ -374,7 +374,19 @@ fn read_rules_or_exit(
 /// empty folder, and compiles every file first with the engine's own
 /// parser: one invalid file is reported with its path and line and no
 /// pack is written.
-fn run_rules_pack_command(lang: &str, dir: &Path, out: &Path, name: Option<String>) -> ExitCode {
+///
+/// `demo` (ticket #153) keeps the demo rules only
+/// (`pack_format::demo_sources`, the selection `build.rs` uses for
+/// `rules-demo.scapack`), names the pack `demo` by default and refuses a
+/// folder without any: the export script builds the shared repository's
+/// pack this way, never from the full catalog.
+fn run_rules_pack_command(
+    lang: &str,
+    dir: &Path,
+    out: &Path,
+    name: Option<String>,
+    demo: bool,
+) -> ExitCode {
     use sast_engine::rules::pack_format;
     let script_locale = sast_engine::i18n::load_script_locale(lang);
     let say = |key: &str| sast_engine::i18n::t(&script_locale, key);
@@ -393,6 +405,18 @@ fn run_rules_pack_command(lang: &str, dir: &Path, out: &Path, name: Option<Strin
         emit_error(&say("rules_pack_no_rules").replace("{path}", &dir.display().to_string()));
         return ExitCode::from(2);
     }
+    let files = if demo {
+        let demo_files = pack_format::demo_sources(&files);
+        if demo_files.is_empty() {
+            emit_error(
+                &say("rules_pack_no_demo_rules").replace("{path}", &dir.display().to_string()),
+            );
+            return ExitCode::from(2);
+        }
+        demo_files
+    } else {
+        files
+    };
     let invalid: Vec<String> = files
         .iter()
         .filter_map(|(rel, content)| {
@@ -409,6 +433,9 @@ fn run_rules_pack_command(lang: &str, dir: &Path, out: &Path, name: Option<Strin
         return ExitCode::from(2);
     }
     let pack_name = name.unwrap_or_else(|| {
+        if demo {
+            return pack_format::DEMO_PACK_NAME.to_string();
+        }
         dir.file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "rules".to_string())
@@ -1377,9 +1404,14 @@ enum RulesAction {
         /// the one a scan reads.
         #[arg(long)]
         out: PathBuf,
-        /// Pack name stored in its header — default: the folder name.
+        /// Pack name stored in its header — default: the folder name, or
+        /// `demo` with `--demo`.
         #[arg(long)]
         name: Option<String>,
+        /// Packs only the rules flagged `demo_fallback true`: the content
+        /// of the shared repository's pack.
+        #[arg(long)]
+        demo: bool,
         /// Message language (`en`/`fr`/`es`/`de`).
         #[arg(long, default_value = "en")]
         lang: String,
@@ -1568,9 +1600,10 @@ fn dispatch(command: Command) -> ExitCode {
                     dir,
                     out,
                     name,
+                    demo,
                     lang,
                 },
-        } => run_rules_pack_command(&lang, &dir, &out, name),
+        } => run_rules_pack_command(&lang, &dir, &out, name, demo),
         Command::Rules {
             action: RulesAction::List { pack, lang },
         } => run_rules_list_command(&lang, &pack),

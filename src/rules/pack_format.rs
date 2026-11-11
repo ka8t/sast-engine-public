@@ -38,6 +38,15 @@ pub const PACK_EXTENSION: &str = "scapack";
 /// File name of the catalog pack, next to the binary (ADR-0040).
 pub const PACK_FILE_NAME: &str = "rules.scapack";
 
+/// File name of the demo pack a private-repository build writes next to
+/// the binary, beside the full one (ticket #153). The export script
+/// delivers the same content as the shared repository's
+/// `rules/rules.scapack`; the binary itself never reads this file.
+pub const DEMO_PACK_FILE_NAME: &str = "rules-demo.scapack";
+
+/// Name stored in the header of the demo pack.
+pub const DEMO_PACK_NAME: &str = "demo";
+
 /// Magic bytes at the start of every pack, version included: a future
 /// incompatible layout gets a new magic rather than a guess.
 const MAGIC: &[u8; 8] = b"SCAPACK1";
@@ -99,13 +108,19 @@ pub fn write_pack(name: &str, files: &[RuleSource]) -> Vec<u8> {
 pub fn write_pack_with_key(name: &str, files: &[RuleSource], key: &[u8; 32]) -> Vec<u8> {
     let mut sorted: Vec<&RuleSource> = files.iter().collect();
     sorted.sort();
-    let header = serde_json::json!({
-        "format": FORMAT_VERSION,
-        "name": name,
-        "key_fingerprint": key_fingerprint(key),
-        "rule_files": sorted.len(),
-    });
-    let header_bytes = serde_json::to_vec(&header).expect("JSON header");
+    // Written by hand, keys in alphabetical order: `serde_json::json!`
+    // orders keys by insertion or alphabetically depending on the
+    // `preserve_order` feature, which differs between `build.rs` and the
+    // binary (ticket #153). The bytes must not depend on it: the build's
+    // `rules-demo.scapack` and `rules pack --demo` must be identical, and
+    // the alphabetical order is the one already published.
+    let header_bytes = format!(
+        "{{\"format\":{FORMAT_VERSION},\"key_fingerprint\":{},\"name\":{},\"rule_files\":{}}}",
+        serde_json::Value::from(key_fingerprint(key)),
+        serde_json::Value::from(name),
+        sorted.len()
+    )
+    .into_bytes();
     let payload_plain = serde_json::to_vec(&sorted).expect("JSON payload");
     // Content-derived nonce: the nonce changes whenever the header or any
     // rule changes, so it never repeats for two different plaintexts.
@@ -240,6 +255,36 @@ pub fn collect_sca_sources(root: &Path) -> Result<Vec<RuleSource>, String> {
     walk(root, root, &mut out)?;
     out.sort();
     Ok(out)
+}
+
+/// Whether a `.sca` source is a demo rule: one of its lines is
+/// `demo_fallback true` (the `requires` block, `src/scan/parser`), the
+/// value compared like the parser does (trimmed, case-insensitive).
+///
+/// A line check rather than the parser, because `build.rs` shares this
+/// module and cannot pull the parser in. A test compares this check with
+/// the parser on every file of `rules/builtin`, so the two cannot drift
+/// apart unnoticed (ticket #153).
+pub fn is_demo_rule(source: &str) -> bool {
+    source.lines().any(|line| {
+        let mut words = line.split_whitespace();
+        words.next() == Some("demo_fallback")
+            && words
+                .next()
+                .is_some_and(|value| value.trim_matches('"').eq_ignore_ascii_case("true"))
+    })
+}
+
+/// The demo rules of a catalog (ticket #153): the only selection of what
+/// the shared repository receives, used by `build.rs` for
+/// `rules-demo.scapack` and by `sast-engine rules pack --demo` for the
+/// export, so both give the same pack byte for byte.
+pub fn demo_sources(files: &[RuleSource]) -> Vec<RuleSource> {
+    files
+        .iter()
+        .filter(|(_, content)| is_demo_rule(content))
+        .cloned()
+        .collect()
 }
 
 /// Hex SHA-256 of a rule file's source: what `rules diff` and
@@ -383,6 +428,40 @@ mod tests {
         bytes.extend_from_slice(&(header.len() as u32).to_le_bytes());
         bytes.extend_from_slice(header);
         assert!(read_header(&bytes).unwrap_err().contains("signed"));
+    }
+
+    /// Ticket #153: the header bytes are fixed (alphabetical keys, no
+    /// space), whatever the `serde_json` features of the build.
+    #[test]
+    fn test_pack_header_bytes_are_fixed() {
+        let pack = write_pack("de\"mo", &sample());
+        let len = u32::from_le_bytes(pack[8..12].try_into().unwrap()) as usize;
+        let header = std::str::from_utf8(&pack[12..12 + len]).unwrap();
+        let expected = format!(
+            "{{\"format\":1,\"key_fingerprint\":\"{}\",\"name\":\"de\\\"mo\",\"rule_files\":2}}",
+            key_fingerprint(&demo_key())
+        );
+        assert_eq!(header, expected);
+        assert_eq!(read_header(&pack).unwrap().name, "de\"mo");
+    }
+
+    #[test]
+    fn test_demo_sources_keep_demo_fallback_true_only() {
+        let files = vec![
+            (
+                "a.sca".to_string(),
+                "requires\n    demo_fallback  true\nend\n".to_string(),
+            ),
+            (
+                "b.sca".to_string(),
+                "requires\n    demo_fallback false\nend\n".to_string(),
+            ),
+            ("c.sca".to_string(), "rule c\nend\n".to_string()),
+            ("d.sca".to_string(), "  demo_fallback TRUE\n".to_string()),
+            ("e.sca".to_string(), "# demo_fallback true\n".to_string()),
+        ];
+        let paths: Vec<String> = demo_sources(&files).into_iter().map(|(p, _)| p).collect();
+        assert_eq!(paths, ["a.sca", "d.sca"]);
     }
 
     #[test]

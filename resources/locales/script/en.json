@@ -483,6 +483,7 @@
   "scan_phase_database": "database (PostgreSQL schema)",
   "scan_invalid_rules_dir": "Error: --rules {path} is neither a rule pack nor a folder.",
   "rules_pack_no_rules": "Error: no .sca rule file in {path}.",
+  "rules_pack_no_demo_rules": "Error: no demo rule (demo_fallback true) in {path}.",
   "rules_pack_invalid_rule": "Error: invalid rule, no pack written: {error}",
   "rules_pack_written": "Pack written: {path} ({count} rule files). Put it next to the executable under the name rules.scapack.",
   "scan_no_rule_files": "Error: no rule file (.sca) found in the folder {path}.",

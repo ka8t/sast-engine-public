@@ -6,7 +6,9 @@
 //!
 //! - In the private repository, `rules/builtin` holds the full catalog as
 //!   plain `.sca` files: they are compiled into the pack, encrypted with
-//!   the public demo key (`pack_format`).
+//!   the public demo key (`pack_format`). The demo rules are also
+//!   written apart as `rules-demo.scapack` (ticket #153): what the shared
+//!   repository receives. The full pack is handed out by hand.
 //! - In the shared repository there is no `.sca` file: the demo pack
 //!   `rules/rules.scapack`, written by `scripts/export_public_repo.sh`, is
 //!   copied as it is.
@@ -90,7 +92,8 @@ fn export_build_version(manifest_dir: &str) {
 /// does once copied elsewhere.
 ///
 /// Source: the `.sca` files of `rules/builtin` when there are any, else
-/// the committed `rules/rules.scapack`. Neither is a build error: the
+/// the committed `rules/rules.scapack`. With `.sca` files it also writes
+/// `rules-demo.scapack`, the demo rules only (ticket #153). Neither is a build error: the
 /// binary then stops at the first scan and names the missing pack. The
 /// pack is deterministic (`pack_format::write_pack`), so a build with
 /// unchanged rules rewrites the same bytes.
@@ -110,10 +113,28 @@ fn write_catalog_pack(manifest_dir: &str, out_dir: &str) {
     let dest = profile_dir.join(pack_format::PACK_FILE_NAME);
 
     let files = pack_format::collect_sca_sources(&builtin).unwrap_or_else(|e| panic!("{e}"));
+    // Private repository only (ticket #153): the demo pack beside the full
+    // one, for the export. A build without `.sca` files removes a stale
+    // copy, so the folder never holds a demo pack its rules did not give.
+    let demo_dest = profile_dir.join(pack_format::DEMO_PACK_FILE_NAME);
     if !files.is_empty() {
         let pack = pack_format::write_pack("builtin", &files);
         fs::write(&dest, pack).expect("writing rules.scapack next to the binary");
-    } else if committed.is_file() {
+        let demo = pack_format::demo_sources(&files);
+        if demo.is_empty() {
+            let _ = fs::remove_file(&demo_dest);
+            println!(
+                "cargo:warning=no demo rule (demo_fallback true) in {}",
+                builtin.display()
+            );
+        } else {
+            let pack = pack_format::write_pack(pack_format::DEMO_PACK_NAME, &demo);
+            fs::write(&demo_dest, pack).expect("writing rules-demo.scapack next to the binary");
+        }
+        return;
+    }
+    let _ = fs::remove_file(&demo_dest);
+    if committed.is_file() {
         fs::copy(&committed, &dest).expect("copying rules/rules.scapack next to the binary");
     } else {
         println!(

@@ -96,7 +96,7 @@ CodeFixture sends you the full catalog as one file, `rules.scapack`.
 1. Replace `target/release/rules.scapack` with it, or keep it elsewhere and pass `--rules /path/to/rules.scapack` to each scan.
 2. Run `sast-engine rules list target/release/rules.scapack`: it prints the number of rule files the pack holds.
 
-The next scan prints the pack it read and a higher rule count. `cargo build` copies the demo pack back over `target/release/rules.scapack`, and `cargo clean` deletes `target/`: keep a copy of the full pack elsewhere.
+The next scan prints the pack it read and a higher rule count. `cargo build` copies `rules/rules.scapack` back over `target/release/rules.scapack`, and `cargo clean` deletes `target/`: keep a copy of the full pack elsewhere, or also replace `rules/rules.scapack` with it so every build puts the full pack next to the engine.
 
 ## Writing your own rules
 

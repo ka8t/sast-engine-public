@@ -483,6 +483,7 @@
   "scan_phase_database": "base de datos (esquema PostgreSQL)",
   "scan_invalid_rules_dir": "Error: --rules {path} no es ni un paquete de reglas ni una carpeta.",
   "rules_pack_no_rules": "Error: ningún archivo de regla .sca en {path}.",
+  "rules_pack_no_demo_rules": "Error: ninguna regla de demostración (demo_fallback true) en {path}.",
   "rules_pack_invalid_rule": "Error: regla no válida, no se escribió ningún paquete: {error}",
   "rules_pack_written": "Paquete escrito: {path} ({count} archivos de reglas). Colóquelo junto al ejecutable con el nombre rules.scapack.",
   "scan_no_rule_files": "Error: ningún archivo de regla (.sca) en la carpeta {path}.",

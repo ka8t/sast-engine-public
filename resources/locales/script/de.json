@@ -483,6 +483,7 @@
   "scan_phase_database": "Datenbank (PostgreSQL-Schema)",
   "scan_invalid_rules_dir": "Fehler: --rules {path} ist weder ein Regelpaket noch ein Ordner.",
   "rules_pack_no_rules": "Fehler: keine .sca-Regeldatei in {path}.",
+  "rules_pack_no_demo_rules": "Fehler: keine Demo-Regel (demo_fallback true) in {path}.",
   "rules_pack_invalid_rule": "Fehler: ungültige Regel, kein Paket geschrieben: {error}",
   "rules_pack_written": "Paket geschrieben: {path} ({count} Regeldateien). Legen Sie es unter dem Namen rules.scapack neben die ausführbare Datei.",
   "scan_no_rule_files": "Fehler: keine Regeldatei (.sca) im Ordner {path}.",
