@@ -107,7 +107,3 @@ CodeFixture sends you the full catalog as one file, `rules.scapack`.
 2. Run `sast-engine rules list target/release/rules.scapack`: it prints the number of rule files the pack holds.
 
 The next scan prints the pack it read and a higher rule count. `cargo build` copies `rules/rules.scapack` back over `target/release/rules.scapack`, and `cargo clean` deletes `target/`: keep a copy of the full pack elsewhere, or also replace `rules/rules.scapack` with it so every build puts the full pack next to the engine.
-
-## Writing your own rules
-
-Put your own `.sca` files in `~/.sast-engine/custom-rules/` (`%USERPROFILE%\.sast-engine\custom-rules\` on Windows), one folder per language (`python/`, `java/`…). Every scan loads them in addition to the catalog, and the report labels their findings as your own rules. No build, update or `cargo clean` touches that folder. `--custom-rules-dir` points to another one.

@@ -23,8 +23,8 @@ use sast_engine::report::brand::{
 use sast_engine::report::compliance_html::HealthThresholds;
 use sast_engine::report::exports::sarif::build_sarif_report;
 use sast_engine::report::html::{ReportContext, generate_html};
-use sast_engine::rules::rule_wizard::{WizardPaths, run_wizard};
 use sast_engine::scan::orchestrator::{ScanConfig, ScanReport, run_scan};
+
 
 /// Exclusions applied to every scan — same list as
 /// `DEFAULT_CONFIG["paths"]["exclude"]` (`Audit/sca/config.py`).
@@ -313,6 +313,11 @@ fn scope_line(
         .replace("{exclude}", &exclude)
 }
 
+/// Whether `--rules` and `rules list` accept a folder of plain `.sca`
+/// files. The shared binary only reads rule packs: plain rules are the
+/// private repository's sources (ADR-0041), never delivered.
+const RULE_FOLDERS_ACCEPTED: bool = false;
+
 /// Catalog for `scan` and `list-rules` (ADR-0040): the `--rules` value
 /// (a pack file, or a folder holding at least one `.sca` file), else
 /// `rules.scapack` next to the executable. Anything else stops the
@@ -330,13 +335,14 @@ fn resolve_rules_path(
         Err(ExitCode::from(2))
     };
     match rules {
-        Some(path) if path.is_dir() => {
+        Some(path) if path.is_dir() && RULE_FOLDERS_ACCEPTED => {
             if sast_engine::rules::catalog::has_rule_files(&path) {
                 Ok(path)
             } else {
                 fail("scan_no_rule_files", &path)
             }
         }
+        Some(path) if path.is_dir() => fail("scan_rules_pack_only", &path),
         Some(path) if path.is_file() => Ok(path),
         Some(path) => fail("scan_invalid_rules_dir", &path),
         None => {
@@ -367,99 +373,18 @@ fn read_rules_or_exit(
     })
 }
 
-/// `sast-engine rules pack <dir> --out <file>` (ADR-0040): compiles the
-/// `.sca` files of a folder into one pack, encrypted with the public demo
-/// key. This is how the export script builds the shared repository's
-/// demo pack and how a full catalog is handed to a tester. Refuses an
-/// empty folder, and compiles every file first with the engine's own
-/// parser: one invalid file is reported with its path and line and no
-/// pack is written.
-///
-/// `demo` (ticket #153) keeps the demo rules only
-/// (`pack_format::demo_sources`, the selection `build.rs` uses for
-/// `rules-demo.scapack`), names the pack `demo` by default and refuses a
-/// folder without any: the export script builds the shared repository's
-/// pack this way, never from the full catalog.
-fn run_rules_pack_command(
-    lang: &str,
-    dir: &Path,
-    out: &Path,
-    name: Option<String>,
-    demo: bool,
-) -> ExitCode {
-    use sast_engine::rules::pack_format;
-    let script_locale = sast_engine::i18n::load_script_locale(lang);
-    let say = |key: &str| sast_engine::i18n::t(&script_locale, key);
-    let files = match pack_format::collect_sca_sources(dir) {
-        Ok(files) => files,
-        Err(error) => {
-            emit_error(
-                &say("rules_open_error")
-                    .replace("{path}", &dir.display().to_string())
-                    .replace("{error}", &error),
-            );
-            return ExitCode::from(2);
-        }
-    };
-    if files.is_empty() {
-        emit_error(&say("rules_pack_no_rules").replace("{path}", &dir.display().to_string()));
-        return ExitCode::from(2);
-    }
-    let files = if demo {
-        let demo_files = pack_format::demo_sources(&files);
-        if demo_files.is_empty() {
-            emit_error(
-                &say("rules_pack_no_demo_rules").replace("{path}", &dir.display().to_string()),
-            );
-            return ExitCode::from(2);
-        }
-        demo_files
-    } else {
-        files
-    };
-    let invalid: Vec<String> = files
-        .iter()
-        .filter_map(|(rel, content)| {
-            let path = dir.join(rel).display().to_string();
-            sast_engine::scan::parser::compile_sca_to_json(content, &path)
-                .err()
-                .map(|e| e.to_string())
-        })
-        .collect();
-    if !invalid.is_empty() {
-        for error in &invalid {
-            emit_error(&say("rules_pack_invalid_rule").replace("{error}", error));
-        }
-        return ExitCode::from(2);
-    }
-    let pack_name = name.unwrap_or_else(|| {
-        if demo {
-            return pack_format::DEMO_PACK_NAME.to_string();
-        }
-        dir.file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "rules".to_string())
-    });
-    let pack = pack_format::write_pack(&pack_name, &files);
-    if let Err(e) = std::fs::write(out, pack) {
-        emit_error(&format!("[sast-engine] {}: {e}", out.display()));
-        return ExitCode::from(2);
-    }
-    let _ = writeln!(
-        std::io::stdout().lock(),
-        "{}",
-        say("rules_pack_written")
-            .replace("{path}", &out.display().to_string())
-            .replace("{count}", &files.len().to_string())
-    );
-    ExitCode::SUCCESS
-}
-
 /// `sast-engine rules list <pack>` (ADR-0040): the rule files of a pack
 /// (or folder), one per line with the first 12 hex characters of their
 /// SHA-256 — the value `rules diff` compares.
 fn run_rules_list_command(lang: &str, path: &Path) -> ExitCode {
     let script_locale = sast_engine::i18n::load_script_locale(lang);
+    if path.is_dir() && !RULE_FOLDERS_ACCEPTED {
+        emit_error(
+            &sast_engine::i18n::t(&script_locale, "scan_rules_pack_only")
+                .replace("{path}", &path.display().to_string()),
+        );
+        return ExitCode::from(2);
+    }
     let files = match read_rules_or_exit(path, &script_locale) {
         Ok(files) => files,
         Err(code) => return code,
@@ -477,84 +402,6 @@ fn run_rules_list_command(lang: &str, path: &Path) -> ExitCode {
         let _ = writeln!(out, "  {}  {rel}", &hash[..12]);
     }
     ExitCode::SUCCESS
-}
-
-/// `sast-engine rules diff <pack> <folder>` (ADR-0040): what differs
-/// between a compiled pack and the plain rules it should hold — one line
-/// per rule file added (`+`, in the folder only), removed (`-`, in the
-/// pack only) or modified (`~`), then a summary. Exit code 0 when both
-/// hold the same rule files, 1 when they differ (like `diff`), 2 when
-/// either cannot be read.
-fn run_rules_diff_command(lang: &str, pack: &Path, dir: &Path) -> ExitCode {
-    let script_locale = sast_engine::i18n::load_script_locale(lang);
-    let before = match read_rules_or_exit(pack, &script_locale) {
-        Ok(files) => files,
-        Err(code) => return code,
-    };
-    let after = match read_rules_or_exit(dir, &script_locale) {
-        Ok(files) => files,
-        Err(code) => return code,
-    };
-    let diff = sast_engine::rules::pack_format::diff_rule_sources(&before, &after);
-    let mut out = std::io::stdout().lock();
-    let fill = |key: &str| {
-        sast_engine::i18n::t(&script_locale, key)
-            .replace("{pack}", &pack.display().to_string())
-            .replace("{dir}", &dir.display().to_string())
-    };
-    if diff.is_identical() {
-        let _ = writeln!(
-            out,
-            "{}",
-            fill("rules_diff_identical").replace("{count}", &diff.unchanged.to_string())
-        );
-        return ExitCode::SUCCESS;
-    }
-    for (mark, paths) in [
-        ('+', &diff.added),
-        ('-', &diff.removed),
-        ('~', &diff.modified),
-    ] {
-        for rel in paths {
-            let _ = writeln!(out, "{mark} {rel}");
-        }
-    }
-    let _ = writeln!(
-        out,
-        "{}",
-        fill("rules_diff_summary")
-            .replace("{added}", &diff.added.len().to_string())
-            .replace("{removed}", &diff.removed.len().to_string())
-            .replace("{modified}", &diff.modified.len().to_string())
-            .replace("{unchanged}", &diff.unchanged.to_string())
-    );
-    ExitCode::from(1)
-}
-
-/// Custom rules folder of a scan (ticket #84): `--custom-rules-dir`, else
-/// [`default_custom_rules_dir`]. `None` with an explicit `--rules <DIR>`:
-/// an isolated test catalog must never see the custom rules slip in. The
-/// folder does not need to exist: `run_scan` checks `is_dir()` before any
-/// read, a missing default is silent.
-fn resolve_custom_rules_dir(
-    explicit_rules: bool,
-    custom_rules_dir: Option<PathBuf>,
-) -> Option<PathBuf> {
-    if explicit_rules {
-        return None;
-    }
-    custom_rules_dir.or_else(default_custom_rules_dir)
-}
-
-/// Default custom rules folder: `.sast-engine/custom-rules` in the user's
-/// home (`~` on macOS and Linux, `%USERPROFILE%` on Windows). Deliberate
-/// deviation from Python's `{SCRIPT_DIR}/custom-rules/` and from the
-/// former default next to the executable (ADR-0039): next to a binary
-/// built from source, the folder sat in `target/`, which `cargo clean`
-/// deletes. The client's own rules must never be deleted by a build, an
-/// update or a reinstall. `None` only when no home folder is known.
-fn default_custom_rules_dir() -> Option<PathBuf> {
-    std::env::home_dir().map(|home| home.join(".sast-engine").join("custom-rules"))
 }
 
 /// Rule languages declared by the project (ADR-0038): the `languages` key
@@ -919,97 +766,13 @@ mod tests {
         let missing = resolve_rules_path(Some(parent.join("missing")), &locale);
         std::fs::remove_dir_all(&parent).ok();
 
-        assert_eq!(folder.ok(), Some(builtin_rules_dir()));
+        // A folder of plain rules: private build only (ADR-0041).
+        assert_eq!(folder.is_ok(), RULE_FOLDERS_ACCEPTED);
         assert_eq!(file.ok(), Some(pack));
         assert_eq!(no_rules.err(), Some(ExitCode::from(2)));
         assert_eq!(missing.err(), Some(ExitCode::from(2)));
     }
 
-    /// Ticket #84: custom rules are never mixed into an explicit
-    /// `--rules <DIR>`; otherwise the given folder, else
-    /// `~/.sast-engine/custom-rules` (ADR-0039, kept by ADR-0040).
-    #[test]
-    fn test_resolve_custom_rules_dir_ignored_with_explicit_rules() {
-        let given = Some(PathBuf::from("/tmp/my-rules"));
-        assert_eq!(resolve_custom_rules_dir(true, given.clone()), None);
-        assert_eq!(resolve_custom_rules_dir(false, given.clone()), given);
-        let default = resolve_custom_rules_dir(false, None).expect("home is known");
-        assert!(
-            default.ends_with(".sast-engine/custom-rules"),
-            "{}",
-            default.display()
-        );
-        assert!(
-            !default.starts_with(std::env::current_exe().unwrap().parent().unwrap()),
-            "never next to the binary, where a build can delete it"
-        );
-    }
-
-    /// `run_scan_command` end to end, in-process (ticket #138): a file
-    /// include scans that file only, and a missing include does not stop
-    /// the scan.
-    #[test]
-    fn test_run_scan_command_scans_file_include_only() {
-        let root = std::env::temp_dir().join(format!("sast_run_scan_{}", std::process::id()));
-        std::fs::create_dir_all(root.join("src/app")).unwrap();
-        let tainted = "import os\nos.system(input())\n";
-        std::fs::write(root.join("src/app/a.py"), tainted).unwrap();
-        std::fs::write(root.join("src/b.py"), tainted).unwrap();
-        std::fs::write(
-            root.join("audit.config.json"),
-            r#"{"paths": {"include": ["src/app/a.py", "srcc/"], "exclude": []}}"#,
-        )
-        .unwrap();
-        let out_dir =
-            std::env::temp_dir().join(format!("sast_run_scan_out_{}", std::process::id()));
-        std::fs::create_dir_all(&out_dir).unwrap();
-        let report = out_dir.join("report.txt");
-        let metrics = out_dir.join("metrics.json");
-
-        run_scan_command(ScanArgs {
-            path: root.clone(),
-            rules: Some(builtin_rules_dir()),
-            format: "text".into(),
-            lang: "en".into(),
-            log_format: "text".into(),
-            output: Some(report.clone()),
-            suppress_file: None,
-            exclude: vec![],
-            quiet: true,
-            with_tests: false,
-            test_command: None,
-            with_deps: false,
-            db_host: None,
-            db_port: None,
-            db_name: None,
-            db_user: None,
-            db_password_env_file: None,
-            db_password_env_var: None,
-            data_dir: Some(out_dir.join("datas")),
-            quick: false,
-            only_category: None,
-            disable_rule: vec![],
-            severity: None,
-            custom_rules_dir: None,
-            advisories_dir: None,
-            brand_file: None,
-            sbom: false,
-            metrics_output: Some(metrics.clone()),
-        });
-        let text = std::fs::read_to_string(&report).unwrap_or_default();
-        let metrics: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(&metrics).unwrap_or_default())
-                .unwrap_or_default();
-        std::fs::remove_dir_all(&root).ok();
-        std::fs::remove_dir_all(&out_dir).ok();
-
-        assert!(text.contains("a.py:"), "{text}");
-        assert!(!text.contains("b.py:"), "{text}");
-        assert!(
-            metrics.to_string().contains("\"files_scanned\":1"),
-            "{metrics}"
-        );
-    }
 
     #[test]
     fn test_phase_progress_line_and_print() {
@@ -1250,11 +1013,9 @@ enum Command {
     Scan {
         /// Path of the project to scan.
         path: PathBuf,
-        /// Rules: a rule pack (`*.scapack`) or a folder of plain `.sca`
-        /// files laid out by language (`<language>/<category>/<rule>.sca`),
-        /// ADR-0040 — default: `rules.scapack` next to the executable.
-        /// Only the rules of the project's languages are kept. With this
-        /// option, the custom rules folder is not loaded.
+        /// Rules: a rule pack (`*.scapack`), ADR-0040 — default:
+        /// `rules.scapack` next to the executable. Only the rules of the
+        /// project's languages are kept.
         #[arg(long)]
         rules: Option<PathBuf>,
         /// Output format: `text`, `sarif` or `html`.
@@ -1329,13 +1090,6 @@ enum Command {
         /// "HIGH,CRITICAL"). Accepted values: CRITICAL/HIGH/MEDIUM/LOW/INFO.
         #[arg(long)]
         severity: Option<String>,
-        /// Custom rules directory, loaded IN ADDITION to the builtin
-        /// catalog (ticket #84) and filtered on the same languages —
-        /// default: `~/.sast-engine/custom-rules` (ADR-0039), out of reach
-        /// of any build. Has no effect if `--rules <DIR>` is provided
-        /// (total, exclusive replacement).
-        #[arg(long)]
-        custom_rules_dir: Option<PathBuf>,
         /// Offline advisory database of published vulnerabilities, read by
         /// `--with-deps` — default: `advisories/` next
         /// to the executable. Missing: no vulnerability matching, the rest
@@ -1366,9 +1120,8 @@ enum Command {
         /// Display language (`en`/`fr`/`es`/`de`).
         #[arg(long, default_value = "en")]
         lang: String,
-        /// Rules: a pack or a folder of `.sca` files — default:
-        /// `rules.scapack` next to the executable (same as `scan --rules`).
-        /// Every language is listed.
+        /// Rules: a rule pack — default: `rules.scapack` next to the
+        /// executable (same as `scan --rules`). Every language is listed.
         #[arg(long)]
         rules: Option<PathBuf>,
     },
@@ -1377,61 +1130,15 @@ enum Command {
         #[command(subcommand)]
         action: RulesAction,
     },
-    /// Interactive wizard for creating/editing a custom `.sca` rule.
-    CreateRule {
-        /// Custom rules directory (write).
-        #[arg(long)]
-        custom_rules: PathBuf,
-        /// Builtin rules directory (read-only, duplicate detection).
-        #[arg(long)]
-        builtin_rules: PathBuf,
-        /// Wizard message language (`en`/`fr`/`es`/`de`).
-        #[arg(long, default_value = "en")]
-        lang: String,
-    },
 }
 
 /// Subcommands of `sast-engine rules`.
 #[derive(Subcommand)]
 enum RulesAction {
-    /// Compiles the `.sca` rules of a folder into one rule pack, encrypted
-    /// with the public demo key. Every file is checked first; one invalid
-    /// file and no pack is written.
-    Pack {
-        /// Folder of `.sca` rule files (searched recursively).
-        dir: PathBuf,
-        /// Pack file to write: `rules.scapack` next to the executable is
-        /// the one a scan reads.
-        #[arg(long)]
-        out: PathBuf,
-        /// Pack name stored in its header — default: the folder name, or
-        /// `demo` with `--demo`.
-        #[arg(long)]
-        name: Option<String>,
-        /// Packs only the rules flagged `demo_fallback true`: the content
-        /// of the shared repository's pack.
-        #[arg(long)]
-        demo: bool,
-        /// Message language (`en`/`fr`/`es`/`de`).
-        #[arg(long, default_value = "en")]
-        lang: String,
-    },
-    /// Lists the rule files of a pack (or folder) with the start of their
-    /// SHA-256.
+    /// Lists the rule files of a pack with the start of their SHA-256.
     List {
-        /// Rule pack (`*.scapack`) or folder of `.sca` files.
+        /// Rule pack (`*.scapack`).
         pack: PathBuf,
-        /// Message language (`en`/`fr`/`es`/`de`).
-        #[arg(long, default_value = "en")]
-        lang: String,
-    },
-    /// Compares a pack with a folder of plain `.sca` files: rule files
-    /// added, removed and modified. Exit code 0 if identical, 1 if not.
-    Diff {
-        /// Rule pack (`*.scapack`), or a folder.
-        pack: PathBuf,
-        /// Folder of `.sca` files (for example `rules/builtin`), or a pack.
-        dir: PathBuf,
         /// Message language (`en`/`fr`/`es`/`de`).
         #[arg(long, default_value = "en")]
         lang: String,
@@ -1446,12 +1153,8 @@ impl Command {
             Command::Scan { lang, .. }
             | Command::ListRules { lang, .. }
             | Command::Rules {
-                action:
-                    RulesAction::Pack { lang, .. }
-                    | RulesAction::List { lang, .. }
-                    | RulesAction::Diff { lang, .. },
-            }
-            | Command::CreateRule { lang, .. } => lang,
+                action: RulesAction::List { lang, .. },
+            } => lang,
         }
     }
 }
@@ -1553,7 +1256,6 @@ fn dispatch(command: Command) -> ExitCode {
             only_category,
             disable_rule,
             severity,
-            custom_rules_dir,
             advisories_dir,
             brand_file,
             sbom,
@@ -1582,34 +1284,15 @@ fn dispatch(command: Command) -> ExitCode {
             only_category,
             disable_rule,
             severity,
-            custom_rules_dir,
             advisories_dir,
             brand_file,
             sbom,
             metrics_output,
         }),
-        Command::CreateRule {
-            custom_rules,
-            builtin_rules,
-            lang,
-        } => run_create_rule_command(custom_rules, builtin_rules, lang),
         Command::ListRules { lang, rules } => run_list_rules_command(&lang, rules),
-        Command::Rules {
-            action:
-                RulesAction::Pack {
-                    dir,
-                    out,
-                    name,
-                    demo,
-                    lang,
-                },
-        } => run_rules_pack_command(&lang, &dir, &out, name, demo),
         Command::Rules {
             action: RulesAction::List { pack, lang },
         } => run_rules_list_command(&lang, &pack),
-        Command::Rules {
-            action: RulesAction::Diff { pack, dir, lang },
-        } => run_rules_diff_command(&lang, &pack, &dir),
     }
 }
 
@@ -1740,31 +1423,6 @@ fn run_list_rules_command(lang: &str, rules: Option<PathBuf>) -> ExitCode {
     ExitCode::from(0)
 }
 
-fn run_create_rule_command(
-    custom_rules: PathBuf,
-    builtin_rules: PathBuf,
-    lang: String,
-) -> ExitCode {
-    let script_locale = sast_engine::i18n::load_script_locale(&lang);
-    let paths = WizardPaths {
-        custom_rules_dir: &custom_rules,
-        builtin_rules_dir: &builtin_rules,
-    };
-    let stdin = std::io::stdin();
-    let mut reader = stdin.lock();
-    let stdout = std::io::stdout();
-    let mut writer = stdout.lock();
-
-    match run_wizard(&mut reader, &mut writer, &script_locale, &paths) {
-        Ok(Some(_)) => ExitCode::from(0),
-        Ok(None) => ExitCode::from(0),
-        Err(e) => {
-            eprintln!("Internal error: {e}");
-            ExitCode::from(4)
-        }
-    }
-}
-
 /// Writes the CycloneDX SBOM of the project's statically parsed
 /// dependencies to `<data dir>/<PREFIX>-SBOM-<timestamp>.json` — same
 /// location and name pattern as Python (`comparison.py::_export_sbom`,
@@ -1832,7 +1490,6 @@ struct ScanArgs {
     only_category: Option<String>,
     disable_rule: Vec<String>,
     severity: Option<String>,
-    custom_rules_dir: Option<PathBuf>,
     advisories_dir: Option<PathBuf>,
     brand_file: Option<PathBuf>,
     sbom: bool,
@@ -1864,7 +1521,6 @@ fn run_scan_command(args: ScanArgs) -> ExitCode {
         only_category,
         disable_rule,
         severity,
-        custom_rules_dir,
         advisories_dir,
         brand_file,
         sbom,
@@ -1888,7 +1544,6 @@ fn run_scan_command(args: ScanArgs) -> ExitCode {
     // ADR-0040: `--rules <PATH>`, else `rules.scapack` next to the
     // executable. A missing pack or a folder without any `.sca` file would
     // scan with no rule at all, so it stops here with the path searched.
-    let explicit_rules = rules.is_some();
     let rules_path = match resolve_rules_path(rules, &script_locale) {
         Ok(path) => path,
         Err(code) => return code,
@@ -2070,7 +1725,9 @@ fn run_scan_command(args: ScanArgs) -> ExitCode {
     let category_overrides =
         sast_engine::project::project_config::read_category_overrides_config(&path);
 
-    let custom_rules_dir = resolve_custom_rules_dir(explicit_rules, custom_rules_dir);
+    // Custom rules are read by the private build only (ADR-0041): the
+    // shared binary scans with the delivered pack alone.
+    let custom_rules_dir: Option<PathBuf> = None;
     // Default: next to the executable, where `sast-advisories update`
     // writes by default when both binaries share a directory (ADR-0035).
     // A missing directory only disables vulnerability matching.

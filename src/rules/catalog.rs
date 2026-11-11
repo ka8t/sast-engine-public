@@ -377,34 +377,8 @@ pub fn rule_listing(files: &[RuleSource]) -> Vec<RuleListing> {
     by_id.into_values().collect()
 }
 
-/// `rules/builtin` of this repository — the folder `build.rs` packs next
-/// to the binary. For tests that scan with the real catalog.
-#[cfg(test)]
-pub(crate) fn builtin_rules_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("rules")
-        .join("builtin")
-}
 
-/// The `.sca` sources of `rules/builtin`. For tests that check the
-/// catalog itself.
-#[cfg(test)]
-pub(crate) fn source_catalog() -> Vec<RuleSource> {
-    read_rule_sources(&builtin_rules_dir())
-}
 
-/// Set of rule ids of the compiled source catalog — ticket #37/spec #26
-/// (compliance-mapping drift safeguard): each mapping test compares its
-/// own file's keys against this set. `BTreeSet` for a reproducible error
-/// message.
-#[cfg(test)]
-pub(crate) fn compiled_rule_ids() -> std::collections::BTreeSet<String> {
-    compile_catalog(&source_catalog())
-        .0
-        .iter()
-        .filter_map(|rule| rule.get("id").and_then(|id| id.as_str()).map(String::from))
-        .collect()
-}
 
 #[cfg(test)]
 mod tests {
@@ -431,45 +405,8 @@ mod tests {
         loaded.files.iter().map(|f| f.rel_path.clone()).collect()
     }
 
-    #[test]
-    fn test_rule_listing_uses_folder_category_and_unique_ids() {
-        let listing = rule_listing(&source_catalog());
-        let ids: std::collections::BTreeSet<&str> = listing.iter().map(|r| r.id.as_str()).collect();
-        assert_eq!(ids.len(), listing.len(), "ids are unique");
-        let cicd = listing
-            .iter()
-            .find(|r| r.category_dir == "cicd")
-            .expect("YAML CI/CD rules are listed under their folder category");
-        assert!(!cicd.id.is_empty());
-        assert!(listing.iter().all(|r| !r.category_dir.ends_with(".sca")));
-    }
 
-    #[test]
-    fn test_source_catalog_compiles_without_errors_for_four_languages() {
-        let files = source_catalog();
-        for lang in ["python/", "java/", "javascript/", "php/"] {
-            let found = files.iter().any(|(rel, _)| rel.starts_with(lang));
-            assert!(found, "no rule for {lang}");
-        }
-        let (rules, errors) = compile_catalog(&files);
-        assert!(errors.is_empty(), "invalid rules: {errors:?}");
-        assert!(!rules.is_empty());
-    }
 
-    /// Every first-level folder of the real catalog is a language folder:
-    /// otherwise its rules would be read for every project. Files there
-    /// (a macOS `.DS_Store`) are not rules and do not count.
-    #[test]
-    fn test_builtin_catalog_has_only_language_folders() {
-        let entries = std::fs::read_dir(builtin_rules_dir()).unwrap();
-        for entry in entries.flatten().filter(|e| e.path().is_dir()) {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            assert!(
-                RULE_LANGUAGES.contains(&name.as_str()),
-                "rules/builtin/{name} is not a language folder"
-            );
-        }
-    }
 
     #[test]
     fn test_is_targeted_rule_path_filters_language_folders_only() {

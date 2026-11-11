@@ -34,6 +34,7 @@ tree-sitter-typescript = "0.23.2"
 tree-sitter-yaml = "0.7.2"
 which = "8.0.0"
 
+
 # `build.rs` compiles `rules/builtin` into the encrypted catalog pack
 # (ADR-0040) with the library's own `pack_format.rs`.
 [build-dependencies]

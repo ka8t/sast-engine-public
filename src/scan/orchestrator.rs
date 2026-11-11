@@ -2738,41 +2738,6 @@ mod tests {
     // the real catalog. Their exclusion with `--rules <DIR>` is decided by
     // the CLI (`main.rs::resolve_custom_rules_dir`). ===
 
-    #[test]
-    fn test_custom_rules_loaded_additively_with_real_catalog() {
-        let root = temp_dir();
-        let custom_dir = root.join("custom-rules");
-        write(
-            &custom_dir,
-            "my_custom_rule.sca",
-            "rule my_custom_rule\n  language  python\n  category  security\n  severity  HIGH\n  match\n    pattern  MY_CUSTOM_MARKER\n    scope    line\n  end\nend\n",
-        );
-        write(
-            &root,
-            "app.py",
-            "import base64\neval(base64.b64decode(x))\nMY_CUSTOM_MARKER\n",
-        );
-
-        let config = ScanConfig {
-            root: root.clone(),
-            rules_path: crate::rules::catalog::builtin_rules_dir(),
-            custom_rules_dir: Some(custom_dir),
-            ..ScanConfig::default()
-        };
-        let report = run_scan(&config);
-        assert!(
-            report.findings.iter().any(|f| f.rule_key == "base64_eval"),
-            "le catalogue builtin reste actif en plus des règles custom"
-        );
-        assert!(
-            report
-                .findings
-                .iter()
-                .any(|f| f.rule_key == "my_custom_rule"),
-            "la règle custom est bien chargée et détecte"
-        );
-        std::fs::remove_dir_all(&root).ok();
-    }
 
     /// `adjust_injection_confidence`: an untraced injection finding on a
     /// taint-confirmed line is dropped; elsewhere it is capped at 60;
@@ -2840,74 +2805,7 @@ mod tests {
         assert_eq!(SourceLanguage::from_path(Path::new("a.txt")), None);
     }
 
-    /// End-to-end on the real catalog: the Vue/Svelte XSS rules fire
-    /// (Python fixtures `sample_vue_xss.vue`/`sample_svelte_xss.svelte`),
-    /// and a `.tsx` file is scanned with a JSX-capable grammar.
-    #[test]
-    fn test_template_and_tsx_files_are_scanned() {
-        let root = temp_dir();
-        write(
-            &root,
-            "App.vue",
-            "<template>\n  <div v-html=\"userInput\"></div>\n</template>\n",
-        );
-        write(&root, "Page.svelte", "<div>{@html userInput}</div>\n");
-        write(
-            &root,
-            "View.tsx",
-            "export const V = () => <div>{x}</div>;\nconst token = Math.random();\n",
-        );
-        let config = ScanConfig {
-            root: root.clone(),
-            rules_path: crate::rules::catalog::builtin_rules_dir(),
-            ..ScanConfig::default()
-        };
-        let report = run_scan(&config);
-        let has = |rule: &str, file: &str| {
-            report
-                .findings
-                .iter()
-                .any(|f| f.rule_key == rule && f.file == file)
-        };
-        assert!(has("xss_vue_vhtml", "App.vue"));
-        assert!(has("xss_svelte_html", "Page.svelte"));
-        assert!(
-            has("insecure_random_js", "View.tsx"),
-            ".tsx is discovered and scanned"
-        );
-        std::fs::remove_dir_all(&root).ok();
-    }
 
-    /// `context-N` multi-line match (DOTALL, fix 2026-11-04): mirrors the
-    /// Python fixture `secret_logged.py:17` that Rust used to miss.
-    #[test]
-    fn test_context_scope_matches_across_lines_on_real_catalog() {
-        let root = temp_dir();
-        write(
-            &root,
-            "auth.py",
-            "import logging\nlogger = logging.getLogger(__name__)\n\ndef login(username, password):\n    logger.info(\n        f\"Login attempt for {username} with {password}\"\n    )\n",
-        );
-        let config = ScanConfig {
-            root: root.clone(),
-            rules_path: crate::rules::catalog::builtin_rules_dir(),
-            ..ScanConfig::default()
-        };
-        let report = run_scan(&config);
-        assert!(
-            report
-                .findings
-                .iter()
-                .any(|f| f.rule_key == "secret_logged_fstring" && f.line == 5),
-            "{:?}",
-            report
-                .findings
-                .iter()
-                .map(|f| (&f.rule_key, f.line))
-                .collect::<Vec<_>>()
-        );
-        std::fs::remove_dir_all(&root).ok();
-    }
 
     /// ADR-0040: a catalog pack gives the scan its rules for the target
     /// languages only, the custom rules folder adds the client's own, and
