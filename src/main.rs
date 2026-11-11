@@ -576,6 +576,48 @@ fn rule_source_lines(report: &ScanReport, script_locale: &serde_json::Value) -> 
     lines
 }
 
+/// Console line naming the folders the walk skipped as holding no project
+/// code (tickets #148 and #152): their path relative to the project, with
+/// a trailing `/`, and why — `docs/ (documentation)`. Past
+/// `SCOPE_LIST_MAX` folders the rest is counted, like the scope line.
+/// `None` when nothing was skipped. A documentation folder can hold code
+/// that runs: this line is what keeps it from going unchecked without a
+/// word.
+fn skipped_dirs_line(
+    root: &Path,
+    skipped: &[sast_engine::scan::discovery::SkippedDir],
+    say: impl Fn(&str) -> String,
+) -> Option<String> {
+    use sast_engine::scan::discovery::SkippedDirKind;
+    if skipped.is_empty() {
+        return None;
+    }
+    let items: Vec<String> = skipped
+        .iter()
+        .map(|(path, kind)| {
+            let rel = path
+                .strip_prefix(root)
+                .unwrap_or(path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            let reason = match kind {
+                SkippedDirKind::Documentation => say("scan_skipped_documentation"),
+                SkippedDirKind::Virtualenv => say("scan_skipped_virtualenv"),
+                SkippedDirKind::BuildOutput => say("scan_skipped_build_output"),
+            };
+            format!("{rel}/ ({reason})")
+        })
+        .collect();
+    let dirs = if items.len() <= SCOPE_LIST_MAX + 1 {
+        items.join(", ")
+    } else {
+        let more =
+            say("scan_scope_more").replace("{count}", &(items.len() - SCOPE_LIST_MAX).to_string());
+        format!("{}, {more}", items[..SCOPE_LIST_MAX].join(", "))
+    };
+    Some(say("scan_skipped_dirs").replace("{dirs}", &dirs))
+}
+
 /// Include paths of `audit.config.json` that do not exist under `root`,
 /// in their configured order. The walk skips them (`find_files`), so the
 /// CLI reports them once per scan instead of letting a typo scan nothing
@@ -795,6 +837,40 @@ mod tests {
     /// there is no pack).
     fn builtin_rules_dir() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("rules/builtin")
+    }
+
+    /// Ticket #152: skipped folders are named relative to the project with
+    /// their reason, cut past `SCOPE_LIST_MAX`; nothing skipped, no line.
+    #[test]
+    fn test_skipped_dirs_line_names_folders_and_reasons() {
+        use sast_engine::scan::discovery::SkippedDirKind;
+        let locale = sast_engine::i18n::load_script_locale("en");
+        let say = |key: &str| sast_engine::i18n::t(&locale, key);
+        let root = Path::new("/p");
+        let skipped = vec![
+            (root.join("docs"), SkippedDirKind::Documentation),
+            (root.join("tools/.venv-clone"), SkippedDirKind::Virtualenv),
+            (root.join("api/target"), SkippedDirKind::BuildOutput),
+        ];
+        let line = skipped_dirs_line(root, &skipped, say).expect("a line");
+        assert_eq!(
+            line,
+            "Skipped, not project code: docs/ (documentation), tools/.venv-clone/ (Python virtualenv), api/target/ (build output). Name a folder in paths.include to scan it."
+        );
+        let many: Vec<_> = (0..8)
+            .map(|i| {
+                (
+                    root.join(format!("m{i}/docs")),
+                    SkippedDirKind::Documentation,
+                )
+            })
+            .collect();
+        let cut = skipped_dirs_line(root, &many, say).unwrap();
+        assert!(
+            cut.contains("m4/docs/") && !cut.contains("m5/docs/"),
+            "{cut}"
+        );
+        assert!(skipped_dirs_line(root, &[], say).is_none());
     }
 
     /// ADR-0040: `--rules` takes a pack file, or a folder holding `.sca`
@@ -2078,6 +2154,13 @@ fn run_scan_command(args: ScanArgs) -> ExitCode {
     // languages found in the project but left out of `languages`, whose
     // files got no rule — a warning, never suppressed by `--quiet`.
     for line in rule_source_lines(&report, &script_locale) {
+        emit_progress(quiet, &format!("[sast-engine] {line}"));
+    }
+    // Ticket #152: the folders skipped as holding no project code, named
+    // once per scan (`--quiet` hides it, like the scope line).
+    if let Some(line) = skipped_dirs_line(&config.root, &report.skipped_dirs, |key| {
+        sast_engine::i18n::t(&script_locale, key)
+    }) {
         emit_progress(quiet, &format!("[sast-engine] {line}"));
     }
     if !report.undeclared_languages.is_empty() {

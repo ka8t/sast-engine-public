@@ -157,10 +157,61 @@ pub struct FileDiscoveryConfig {
     /// `exclude_patterns` on the caller side, but kept separate (mirror
     /// of the two distinct config lists on the Python side).
     pub prune_excludes: Vec<String>,
-    /// Skip Maven and Gradle build output met during the walk
-    /// ([`is_build_output_dir`]) — on for the project scan, off for
-    /// loading rule files.
-    pub skip_build_output: bool,
+    /// Skip the folders that hold no project code met during the walk
+    /// ([`non_project_dir_kind`]: build output, Python virtualenvs,
+    /// documentation) — on for the project scan.
+    pub skip_non_project_dirs: bool,
+}
+
+/// Why the walk skipped a folder that holds no project code
+/// ([`non_project_dir_kind`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SkippedDirKind {
+    /// Maven or Gradle build output (ticket #148).
+    BuildOutput,
+    /// A Python virtualenv, whatever its name (ticket #152).
+    Virtualenv,
+    /// A documentation folder (ticket #152).
+    Documentation,
+}
+
+/// A folder skipped by the walk: its path and why.
+pub type SkippedDir = (PathBuf, SkippedDirKind);
+
+/// Names of the documentation folders skipped by the walk, compared
+/// without case (ticket #152).
+pub const DOCUMENTATION_DIR_NAMES: [&str; 4] = ["docs", "doc", "documentation", "wiki"];
+
+/// Whether `dir`, met during the walk, holds no project code, and why.
+///
+/// - **Build output** ([`is_build_output_dir`], ticket #148).
+/// - **Python virtualenv** (ticket #152): a folder with `pyvenv.cfg` at
+///   its root, the file `venv` and `virtualenv` always write. The marker
+///   file decides, not the name: `.venv-clone/` (1.1 GB, 15,778
+///   third-party Python files) made a tester's scan very long, and a
+///   folder named `env/` that is not a virtualenv stays scanned.
+/// - **Documentation** (ticket #152): `docs/`, `doc/`, `documentation/`
+///   and `wiki/`, at any depth, by name.
+///
+/// Deliberate deviation from Python, which only skips `.venv/` by name
+/// (`Audit/sca/config.py:36`) and scans the rest. A documentation folder
+/// can hold code that runs (a Docusaurus or Sphinx site): the CLI names
+/// every skipped folder after the scan, so that code never goes
+/// unchecked without a word, and naming the folder as a start path of
+/// `paths.include` scans it, since only folders met during the walk are
+/// checked.
+pub fn non_project_dir_kind(dir: &Path) -> Option<SkippedDirKind> {
+    if is_build_output_dir(dir) {
+        return Some(SkippedDirKind::BuildOutput);
+    }
+    if dir.join("pyvenv.cfg").is_file() {
+        return Some(SkippedDirKind::Virtualenv);
+    }
+    let name = dir.file_name()?.to_str()?;
+    DOCUMENTATION_DIR_NAMES
+        .iter()
+        .any(|doc| name.eq_ignore_ascii_case(doc))
+        .then_some(SkippedDirKind::Documentation)
 }
 
 /// Maven and Gradle build output: a `target` folder next to a `pom.xml`,
@@ -204,17 +255,38 @@ pub fn is_build_output_dir(dir: &Path) -> bool {
 /// it once per scan (`missing_include_paths` in `main.rs`), since this
 /// function runs once per language pass.
 pub fn find_files(root: &Path, paths: &[&Path], config: &FileDiscoveryConfig) -> Vec<PathBuf> {
-    let mut files = Vec::new();
-    let mut seen: HashSet<PathBuf> = HashSet::new();
+    find_files_and_skipped(root, paths, config).0
+}
+
+/// [`find_files`], plus the folders skipped because they hold no project
+/// code ([`non_project_dir_kind`]), in walk order, each once.
+pub fn find_files_and_skipped(
+    root: &Path,
+    paths: &[&Path],
+    config: &FileDiscoveryConfig,
+) -> (Vec<PathBuf>, Vec<SkippedDir>) {
+    let mut walk = Walk {
+        files: Vec::new(),
+        seen: HashSet::new(),
+        skipped: Vec::new(),
+    };
     for start in paths {
         let full_path = root.join(start);
         if full_path.is_file() {
-            consider_file(&full_path, root, config, &mut files, &mut seen);
+            consider_file(&full_path, root, config, &mut walk.files, &mut walk.seen);
         } else if full_path.is_dir() {
-            walk_dir(&full_path, root, config, &mut files, &mut seen);
+            walk_dir(&full_path, root, config, &mut walk);
         }
     }
-    files
+    (walk.files, walk.skipped)
+}
+
+/// What a walk collects: the files kept, the deduplication keys seen and
+/// the folders skipped as holding no project code.
+struct Walk {
+    files: Vec<PathBuf>,
+    seen: HashSet<PathBuf>,
+    skipped: Vec<SkippedDir>,
 }
 
 /// Keeps `filepath` if it passes the extension/filename filter and no
@@ -314,13 +386,7 @@ pub(crate) fn classify_entry(entry: &std::fs::DirEntry) -> WalkEntry {
     WalkEntry::File
 }
 
-fn walk_dir(
-    dir: &Path,
-    root: &Path,
-    config: &FileDiscoveryConfig,
-    files: &mut Vec<PathBuf>,
-    seen: &mut HashSet<PathBuf>,
-) {
+fn walk_dir(dir: &Path, root: &Path, config: &FileDiscoveryConfig, walk: &mut Walk) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
@@ -355,16 +421,25 @@ fn walk_dir(
             !matches_any_exclude(&rel, &config.prune_excludes)
         });
     }
-    if config.skip_build_output {
-        subdirs.retain(|d| !is_build_output_dir(d));
+    if config.skip_non_project_dirs {
+        subdirs.retain(|d| match non_project_dir_kind(d) {
+            Some(kind) => {
+                // Overlapping start paths meet a folder twice: list it once.
+                if !walk.skipped.iter().any(|(path, _)| path == d) {
+                    walk.skipped.push((d.clone(), kind));
+                }
+                false
+            }
+            None => true,
+        });
     }
 
     for filepath in &filepaths {
-        consider_file(filepath, root, config, files, seen);
+        consider_file(filepath, root, config, &mut walk.files, &mut walk.seen);
     }
 
     for d in &subdirs {
-        walk_dir(d, root, config, files, seen);
+        walk_dir(d, root, config, walk);
     }
 }
 
@@ -400,7 +475,7 @@ mod tests {
             filenames: vec![],
             exclude_patterns: vec![],
             prune_excludes: vec![],
-            skip_build_output: false,
+            skip_non_project_dirs: false,
         }
     }
 
@@ -488,7 +563,7 @@ mod tests {
             filenames: vec![],
             exclude_patterns: vec!["node_modules/".to_string()],
             prune_excludes: vec!["node_modules/".to_string()],
-            skip_build_output: false,
+            skip_non_project_dirs: false,
         };
         let files = find_files(&root, &[Path::new(".")], &config);
         assert_eq!(files.len(), 1, "node_modules/ élagué, seul a.py reste");
@@ -526,7 +601,7 @@ mod tests {
             filenames: vec![],
             exclude_patterns: vec!["legacy/".to_string()],
             prune_excludes: vec!["legacy/".to_string()],
-            skip_build_output: false,
+            skip_non_project_dirs: false,
         };
         let starts = [Path::new("legacy/old.py"), Path::new("src/app.js")];
         assert!(find_files(&root, &starts, &config).is_empty());
@@ -560,7 +635,7 @@ mod tests {
             filenames: vec![],
             exclude_patterns: vec!["legacy/".to_string()],
             prune_excludes: vec![],
-            skip_build_output: false,
+            skip_non_project_dirs: false,
         };
         let mut files = Vec::new();
         let mut seen = HashSet::new();
@@ -583,13 +658,16 @@ mod tests {
             filenames: vec![],
             exclude_patterns: vec![],
             prune_excludes: vec!["vendor/".to_string()],
-            skip_build_output: false,
+            skip_non_project_dirs: false,
         };
-        let mut files = Vec::new();
-        let mut seen = HashSet::new();
-        walk_dir(&root, &root, &config, &mut files, &mut seen);
+        let mut walk = Walk {
+            files: Vec::new(),
+            seen: HashSet::new(),
+            skipped: Vec::new(),
+        };
+        walk_dir(&root, &root, &config, &mut walk);
         assert_eq!(
-            files,
+            walk.files,
             vec![root.join("a.py"), root.join("b.py"), root.join("sub/c.py")]
         );
         std::fs::remove_dir_all(&root).ok();
@@ -695,7 +773,7 @@ mod tests {
         write_file(&root, "tools/target/c.py", "x\n");
         write_file(&root, "tools/build/d.py", "x\n");
         let mut config = default_config();
-        config.skip_build_output = true;
+        config.skip_non_project_dirs = true;
 
         let rel = |files: Vec<PathBuf>| -> Vec<String> {
             files
@@ -710,7 +788,7 @@ mod tests {
         };
         let scanned = rel(find_files(&root, &[Path::new(".")], &config));
         let named = rel(find_files(&root, &[Path::new("api/target")], &config));
-        config.skip_build_output = false;
+        config.skip_non_project_dirs = false;
         let all = find_files(&root, &[Path::new(".")], &config).len();
         std::fs::remove_dir_all(&root).ok();
 
@@ -727,6 +805,55 @@ mod tests {
         assert_eq!(all, 6);
     }
 
+    /// Ticket #152: a folder with `pyvenv.cfg` is skipped whatever its
+    /// name, an `env/` without it is scanned; `docs/`, `doc/`,
+    /// `documentation/` and `wiki/` are skipped at any depth and in any
+    /// case; a start path naming one is walked; every skipped folder is
+    /// listed once with its reason, even through overlapping start paths.
+    #[test]
+    fn test_find_files_skips_virtualenvs_and_documentation() {
+        let root = temp_project_dir();
+        write_file(&root, "app/main.py", "x\n");
+        write_file(&root, "app/docs/conf.py", "x\n");
+        write_file(&root, "Docs/site.js", "x\n");
+        write_file(&root, "doc/a.py", "x\n");
+        write_file(&root, "documentation/b.py", "x\n");
+        write_file(&root, "wiki/c.py", "x\n");
+        write_file(&root, "tools/.venv-clone/pyvenv.cfg", "home = /usr\n");
+        write_file(&root, "tools/.venv-clone/lib/site.py", "x\n");
+        write_file(&root, "tools/env/run.py", "x\n");
+        let mut config = default_config();
+        config.skip_non_project_dirs = true;
+        let rel = |path: &Path| -> String {
+            path.strip_prefix(&root)
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/")
+        };
+
+        let (files, skipped) =
+            find_files_and_skipped(&root, &[Path::new("."), Path::new("app")], &config);
+        let named = find_files(&root, &[Path::new("app/docs")], &config);
+        std::fs::remove_dir_all(&root).ok();
+
+        let files: Vec<String> = files.iter().map(|f| rel(f)).collect();
+        assert_eq!(files, vec!["app/main.py", "tools/env/run.py"]);
+        let skipped: Vec<(String, SkippedDirKind)> =
+            skipped.iter().map(|(p, k)| (rel(p), *k)).collect();
+        assert_eq!(
+            skipped,
+            vec![
+                ("Docs".to_string(), SkippedDirKind::Documentation),
+                ("doc".to_string(), SkippedDirKind::Documentation),
+                ("documentation".to_string(), SkippedDirKind::Documentation),
+                ("wiki".to_string(), SkippedDirKind::Documentation),
+                ("app/docs".to_string(), SkippedDirKind::Documentation),
+                ("tools/.venv-clone".to_string(), SkippedDirKind::Virtualenv),
+            ]
+        );
+        assert_eq!(named.len(), 1, "a start path naming docs/ is walked");
+    }
+
     #[test]
     fn test_find_files_no_extension_filter_matches_everything() {
         let root = temp_project_dir();
@@ -737,7 +864,7 @@ mod tests {
             filenames: vec![],
             exclude_patterns: vec![],
             prune_excludes: vec![],
-            skip_build_output: false,
+            skip_non_project_dirs: false,
         };
         let files = find_files(&root, &[Path::new(".")], &config);
         assert_eq!(files.len(), 2);
@@ -759,7 +886,7 @@ mod tests {
             filenames: vec!["Dockerfile".to_string()],
             exclude_patterns: vec![],
             prune_excludes: vec![],
-            skip_build_output: false,
+            skip_non_project_dirs: false,
         };
         let files = find_files(&root, &[Path::new(".")], &config);
         assert_eq!(files.len(), 1, "seul Dockerfile doit matcher : {files:?}");
@@ -781,7 +908,7 @@ mod tests {
             filenames: vec!["Dockerfile".to_string()],
             exclude_patterns: vec![],
             prune_excludes: vec![],
-            skip_build_output: false,
+            skip_non_project_dirs: false,
         };
         let files = find_files(&root, &[Path::new(".")], &config);
         assert_eq!(
@@ -805,7 +932,7 @@ mod tests {
             filenames: vec!["Dockerfile".to_string()],
             exclude_patterns: vec![],
             prune_excludes: vec![],
-            skip_build_output: false,
+            skip_non_project_dirs: false,
         };
         let files = find_files(&root, &[Path::new(".")], &config);
         assert_eq!(files.len(), 2, "Dockerfile + a.py, pas b.txt : {files:?}");

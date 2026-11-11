@@ -60,7 +60,7 @@ use crate::scan::dataflow::php_call_graph::PhpCallGraph;
 use crate::scan::dataflow::php_taint_scan::run_taint_rule_php;
 use crate::scan::dataflow::rule_loader::{extract_cwe, extract_message, rule_json_to_specs};
 use crate::scan::dataflow::taint_scan::run_taint_rule;
-use crate::scan::discovery::{FileDiscoveryConfig, find_files};
+use crate::scan::discovery::{FileDiscoveryConfig, SkippedDir, find_files_and_skipped};
 use crate::scan::engine::dispatch::{DispatchOutcome, dispatch_rule};
 
 /// Source language of a discovered file, detected by extension.
@@ -479,6 +479,11 @@ pub struct ScanReport {
     /// Compiled rules kept for the target languages, every source merged,
     /// before the category and `--disable-rule` filters.
     pub rules_loaded: usize,
+    /// Folders the walk skipped because they hold no project code (build
+    /// output, Python virtualenvs, documentation — tickets #148 and #152),
+    /// in walk order. Printed by the CLI, so code in a skipped folder never
+    /// goes unchecked without a word.
+    pub skipped_dirs: Vec<SkippedDir>,
     /// Catalog of compiled rules, indexed by id — needed by the
     /// HTML report (`report::html::generate_html`, `fix_before`/
     /// `fix_after` of `report::findings_html::generate_fix_suggestion`).
@@ -1088,10 +1093,11 @@ pub fn run_scan(config: &ScanConfig) -> ScanReport {
             .collect(),
         exclude_patterns: config.exclude_patterns.clone(),
         prune_excludes: config.exclude_patterns.clone(),
-        skip_build_output: true,
+        skip_non_project_dirs: true,
     };
     let include_paths: Vec<&Path> = config.include_paths.iter().map(Path::new).collect();
-    let files = find_files(&config.root, &include_paths, &discovery_config);
+    let (files, skipped_dirs) =
+        find_files_and_skipped(&config.root, &include_paths, &discovery_config);
 
     // ADR-0038: the rule languages of the scan — the project's declared
     // list, else the languages of the discovered files. The rules of any
@@ -2223,6 +2229,7 @@ pub fn run_scan(config: &ScanConfig) -> ScanReport {
         undeclared_languages,
         rule_sources,
         rules_loaded,
+        skipped_dirs,
         rule_catalog,
         test_results,
         dependency_stats,
