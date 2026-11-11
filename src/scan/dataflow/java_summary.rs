@@ -65,6 +65,13 @@ pub struct JavaFunctionInfo<'tree> {
     pub param_names: Vec<String>,
     pub lineno: usize,
     pub route_param_names: Vec<String>,
+    /// Every annotated formal parameter with the full text of its
+    /// annotations (`("uid", ["@FormParam(\"uid\")"])`). `run_taint_rule_java`
+    /// taints a parameter whose annotation matches one of the rule's
+    /// sources: how the Audit's lexical engine reads JAX-RS / Jakarta EE
+    /// parameters (`@QueryParam`, `@FormParam`...), see
+    /// [`annotated_params`].
+    pub annotated_params: Vec<(String, Vec<String>)>,
 }
 
 fn text(node: Node, source: &[u8]) -> String {
@@ -261,6 +268,58 @@ fn route_param_names<'tree>(
     names
 }
 
+/// Annotated formal parameters and the full text of their annotations,
+/// in signature order (unannotated parameters are left out).
+///
+/// Port of `_JAVA_ANNOTATION_PARAM_RE` (`Audit/sca/parsers/
+/// lexical_taint.py`): the Audit's Java engine merges its dataflow
+/// engine with a lexical one, and only the lexical one reads JAX-RS /
+/// Jakarta EE parameters, by matching the annotation text against the
+/// rule's sources (`source @FormParam\s*\(`). This Rust engine has no
+/// lexical fallback (ADR-0003), so the same reading is done here on the
+/// syntax tree; without it a rule's `@FormParam`/`@QueryParam` sources
+/// never matched (ticket #178: `taint_trust_boundary`, `taint_sqli` on
+/// a JAX-RS resource).
+///
+/// Deliberate deviation: every annotation of a parameter is kept, where
+/// the Audit's regex only tests the first one (`@NotNull @QueryParam("q")
+/// String q` was not tainted there).
+fn annotated_params<'tree>(
+    params_node: Option<Node<'tree>>,
+    source: &[u8],
+) -> Vec<(String, Vec<String>)> {
+    let Some(params_node) = params_node else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    let mut w = params_node.walk();
+    for p in params_node.named_children(&mut w) {
+        if p.kind() != "formal_parameter" {
+            continue;
+        }
+        let mut annotations = Vec::new();
+        let mut pw = p.walk();
+        for child in p.children(&mut pw) {
+            if child.kind() != "modifiers" {
+                continue;
+            }
+            let mut mw = child.walk();
+            for m in child.named_children(&mut mw) {
+                if m.kind() == "marker_annotation" || m.kind() == "annotation" {
+                    annotations.push(text(m, source));
+                }
+            }
+        }
+        if annotations.is_empty() {
+            continue;
+        }
+        if let Some(name_node) = p.child_by_field_name("name") {
+            out.push((text(name_node, source), annotations));
+        }
+    }
+    out
+}
+
 // ============================================================================
 // Method/constructor discovery
 // ============================================================================
@@ -347,6 +406,7 @@ fn method_info<'tree>(
             method_has_spring_mapping(node, source),
             source,
         ),
+        annotated_params: annotated_params(params_node, source),
     })
 }
 
@@ -362,6 +422,7 @@ fn constructor_info<'tree>(
         param_names: param_names(node.child_by_field_name("parameters"), source),
         lineno: node.start_position().row + 1,
         route_param_names: Vec::new(),
+        annotated_params: annotated_params(node.child_by_field_name("parameters"), source),
     })
 }
 

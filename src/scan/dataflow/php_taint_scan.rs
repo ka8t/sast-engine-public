@@ -83,7 +83,54 @@ pub fn run_taint_rule_php<'tree>(
     let mut seen: std::collections::HashSet<(String, usize, Option<usize>)> =
         std::collections::HashSet::new();
     all_findings.retain(|f| seen.insert((f.rule_id.clone(), f.line, f.source_line)));
-    all_findings
+    drop_sinks_on_sanitizer_lines(all_findings, specs, source, source_lines)
+}
+
+/// Drops a finding whose sink line matches one of the rule's sanitizers.
+///
+/// The Audit analyzes PHP with its lexical engine only (ADR-0007), where
+/// "a sanitizer matched on the same line neutralizes the sink"
+/// (`lexical_taint.py`, `sanitizer_match_on_line`): a hardening flag
+/// passed to the sink itself, as in
+/// `simplexml_load_string($_POST['xml'], 'SimpleXMLElement', LIBXML_NONET)`
+/// for `sanitizer LIBXML_NONET`, makes the call safe. This native engine
+/// evaluates the call before the line's sanitizer and reported it (ticket
+/// #178). Kept to PHP, the language whose reference behavior is the
+/// lexical one: the Python dataflow engine, reference for Python, has no
+/// such rule.
+fn drop_sinks_on_sanitizer_lines(
+    findings: Vec<Finding>,
+    specs: &RuleSpecs,
+    source: &[u8],
+    source_lines: Option<&[String]>,
+) -> Vec<Finding> {
+    if specs.sanitizers.iter().all(|s| s.raw_regex.is_none()) {
+        return findings;
+    }
+    let owned: Vec<String>;
+    let lines: &[String] = match source_lines {
+        Some(lines) => lines,
+        None => {
+            owned = String::from_utf8_lossy(source)
+                .lines()
+                .map(String::from)
+                .collect();
+            &owned
+        }
+    };
+    findings
+        .into_iter()
+        .filter(|f| {
+            let Some(text) = f.line.checked_sub(1).and_then(|i| lines.get(i)) else {
+                return true;
+            };
+            !specs.sanitizers.iter().any(|san| {
+                san.raw_regex
+                    .as_ref()
+                    .is_some_and(|re| re.is_match(text).unwrap_or(false))
+            })
+        })
+        .collect()
 }
 
 // ============================================================================
@@ -168,6 +215,26 @@ mod tests {
     fn test_no_source_no_finding() {
         let src = "<?php\nfunction handler($q, $db) { $db->query($q); }\n";
         assert!(run(src, &sqli_specs()).is_empty());
+    }
+
+    #[test]
+    /// Ticket #178: a sanitizer on the sink's own line (a hardening flag
+    /// passed to the sink) neutralizes it, as in the Audit's lexical
+    /// engine; the same sink without the flag is still reported.
+    fn test_sanitizer_on_sink_line_neutralizes_the_sink() {
+        let mut specs = sqli_specs();
+        specs.sanitizers.push(
+            SanitizerSpec::new("SAFE_FLAG")
+                .with_raw_regex(fancy_regex::Regex::new(r"SAFE_FLAG").unwrap()),
+        );
+        let flagged = "<?php\n$db->query($_GET['q'], SAFE_FLAG);\n";
+        let plain = "<?php\n$db->query($_GET['q']);\n";
+        let run_src = |src: &str| {
+            let tree = parse(src);
+            run_taint_rule_php(tree.root_node(), src.as_bytes(), &specs, None)
+        };
+        assert!(run_src(flagged).is_empty());
+        assert!(!run_src(plain).is_empty());
     }
 
     #[test]

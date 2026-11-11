@@ -43,6 +43,18 @@ static GUARD_TERMINATOR_RE: LazyLock<Regex> = LazyLock::new(|| {
         .expect("regex statique valide")
 });
 
+/// Terminators of a guard written on one line in a brace language,
+/// `if (!ALLOWED.Contains(cmd)) return Forbid();` — the list of the
+/// Audit's lexical engine (`lexical_taint.py::
+/// _GUARD_TERMINATOR_RE_MULTILANG`), which is the reference behavior for
+/// C#, PHP and JavaScript (ADR-0003, ADR-0007). Ticket #178.
+static GUARD_TERMINATOR_SAMELINE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"\b(?:return|throw|raise|break|continue|exit|die|abort|halt|Forbid|Halt|sendError|sendRedirect|RedirectToAction|Response\.End)\b",
+    )
+    .expect("regex statique valide")
+});
+
 /// `!` negation (Java/C#/JS style, e.g. `if (!isValid(x))`) —
 /// alternative to Python's `not`/`in`. Excludes `!=` (not a negation
 /// of a sanitizer call).
@@ -326,12 +338,24 @@ fn aux_match_line(
         // `if not <sanitizer>(x): abort/raise/return/break/sys.exit`.
         let stripped = line_text.trim_start();
         let if_indent = line_text.len() - stripped.len();
-        let mut terminator_nearby = false;
+        // A brace-language guard can end on its own line:
+        // `if (!ALLOWED.Contains(cmd)) return Forbid();`. The Python
+        // dataflow engine only looks at the following, more indented
+        // lines (its own syntax); the Audit read C#/PHP/JS guards with its
+        // lexical engine, which also tests the guard line (ticket #178).
+        let brace_if = stripped.starts_with("if (") || stripped.starts_with("if(");
+        let mut terminator_nearby = brace_if
+            && GUARD_TERMINATOR_SAMELINE_RE
+                .is_match(&line_text)
+                .unwrap_or(false);
         let mut reassign_var: Option<String> = None;
         if let Ok(Some(caps)) = GUARD_REASSIGN_SAMELINE_RE.captures(&line_text) {
             reassign_var = caps.get(1).map(|m| m.as_str().to_string());
         }
         for off in 0..8usize {
+            if terminator_nearby {
+                break;
+            }
             let idx = lineno + off;
             if idx >= source_lines.len() {
                 break;
@@ -357,7 +381,9 @@ fn aux_match_line(
         let has_negation = line_text.contains(" not ")
             || line_text.contains(" in ")
             || NEGATION_BANG_RE.is_match(&line_text).unwrap_or(false);
-        let is_guard = (stripped.starts_with("if ") || stripped.starts_with("elif "))
+        let is_guard = (stripped.starts_with("if ")
+            || stripped.starts_with("if(")
+            || stripped.starts_with("elif "))
             && has_negation
             && (terminator_nearby || reassign_var.is_some());
         if is_guard {

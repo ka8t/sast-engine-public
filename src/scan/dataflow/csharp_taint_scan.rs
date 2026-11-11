@@ -111,6 +111,23 @@ mod tests {
         assert_eq!(findings[0].cwe, Some("CWE-89".to_string()));
     }
 
+    /// Ticket #178: an allowlist guard ending on its own line
+    /// (`if (!ALLOWED.Contains(cmd)) return Forbid();`) cleans the
+    /// variable before the sink, as in the Audit's lexical engine; without
+    /// the guard the flow is reported.
+    #[test]
+    fn test_same_line_guard_with_sanitizer_cleans_before_sink() {
+        let mut specs = sqli_specs();
+        specs.sanitizers.push(
+            SanitizerSpec::new("Contains")
+                .with_raw_regex(fancy_regex::Regex::new(r"\.Contains\s*\(").unwrap()),
+        );
+        let guarded = "class Api {\n  object Handler(object db) {\n    string q = Request.GetParameter(\"q\");\n    if (!ALLOWED.Contains(q)) return Forbid();\n    db.Execute(q);\n    return null;\n  }\n}";
+        let unguarded = guarded.replace("    if (!ALLOWED.Contains(q)) return Forbid();\n", "");
+        assert!(run(guarded, &specs).is_empty());
+        assert_eq!(run(&unguarded, &specs).len(), 1);
+    }
+
     /// Ticket #123: source and sink inside an expression-bodied method
     /// (`=> expr`) — was silently skipped (the bare expression lowered to
     /// a `Noop`) and tripped the CFG builder's `debug_assert`.

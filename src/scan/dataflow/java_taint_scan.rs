@@ -44,26 +44,55 @@ pub fn run_taint_rule_java<'tree>(
     for fn_info in collect_java_functions(root, source) {
         let cfg = build_java_cfg(fn_info.body_node, source);
 
-        let init_state = if fn_info.route_param_names.is_empty() {
-            None
-        } else {
-            let mut state = empty_state();
-            for pname in &fn_info.route_param_names {
+        let mut state = empty_state();
+        let mut seeded = false;
+        for pname in &fn_info.route_param_names {
+            state = state_set(
+                &state,
+                pname,
+                Taint::tainted(
+                    ["http".to_string()],
+                    SourceInfo {
+                        line: fn_info.lineno,
+                        expr: format!("{}({pname})", fn_info.name),
+                        kind: "http".to_string(),
+                    },
+                ),
+            );
+            seeded = true;
+        }
+        // A parameter whose annotation matches a source of the rule
+        // (`@FormParam("uid") String uid` for `source @FormParam\s*\(`),
+        // tested against its own annotations only, so `@Context
+        // HttpServletRequest request` beside it stays clean — the Audit's
+        // lexical reading of JAX-RS parameters (`java_summary::
+        // annotated_params`). A Spring route parameter keeps its seed.
+        for (pname, annotations) in &fn_info.annotated_params {
+            if fn_info.route_param_names.contains(pname) {
+                continue;
+            }
+            let matching = specs.sources.iter().find(|src| {
+                src.raw_regex
+                    .as_ref()
+                    .is_some_and(|re| annotations.iter().any(|a| re.is_match(a).unwrap_or(false)))
+            });
+            if let Some(src) = matching {
                 state = state_set(
                     &state,
                     pname,
                     Taint::tainted(
-                        ["http".to_string()],
+                        [src.kind.clone()],
                         SourceInfo {
                             line: fn_info.lineno,
                             expr: format!("{}({pname})", fn_info.name),
-                            kind: "http".to_string(),
+                            kind: src.kind.clone(),
                         },
                     ),
                 );
+                seeded = true;
             }
-            Some(state)
-        };
+        }
+        let init_state = seeded.then_some(state);
 
         let result = analyze_java(&cfg, source, specs, init_state.as_ref(), source_lines);
         all_findings.extend(result.findings);
@@ -439,6 +468,50 @@ mod tests {
     fn test_unannotated_param_not_mapped_handler_no_finding() {
         let src = "class Api { void handler(String query, Statement db) { db.execute(query); } }";
         assert!(run(src, &sqli_specs()).is_empty());
+    }
+
+    // ------------------------------------------------------------------
+    // JAX-RS / Jakarta EE parameters matched against the rule's sources
+    // (ticket #178)
+    // ------------------------------------------------------------------
+
+    fn jaxrs_specs() -> RuleSpecs {
+        let mut specs = sqli_specs();
+        specs.sources.push(
+            SourceSpec::new("@FormParam(", "http")
+                .with_raw_regex(fancy_regex::Regex::new(r"@FormParam\s*\(").unwrap()),
+        );
+        specs
+    }
+
+    #[test]
+    fn test_jaxrs_annotated_param_matching_a_source_reaches_sink() {
+        let src = "class Api { void handler(@FormParam(\"uid\") String uid, Statement db) { db.execute(uid); } }";
+        assert!(!run(src, &jaxrs_specs()).is_empty());
+    }
+
+    /// Only the parameter's own annotations count: `@Context` beside a
+    /// `@FormParam` parameter stays clean.
+    #[test]
+    fn test_other_annotated_param_beside_jaxrs_param_stays_clean() {
+        // On separate lines: a source regex also matches the raw line it
+        // is written on, as in the Audit (§10bis).
+        let src = "class Api {\n  void handler(@FormParam(\"uid\") String uid, @Context HttpServletRequest request, Statement db) {\n    db.execute(request.toString());\n  }\n}";
+        assert!(run(src, &jaxrs_specs()).is_empty());
+    }
+
+    #[test]
+    fn test_jaxrs_annotation_without_matching_source_not_seeded() {
+        let src = "class Api { void handler(@FormParam(\"uid\") String uid, Statement db) { db.execute(uid); } }";
+        assert!(run(src, &sqli_specs()).is_empty());
+    }
+
+    /// Deliberate deviation from the Audit: a second annotation is tested
+    /// too (`@NotNull @FormParam(...)`).
+    #[test]
+    fn test_jaxrs_annotation_after_another_annotation_still_seeded() {
+        let src = "class Api { void handler(@NotNull @FormParam(\"uid\") String uid, Statement db) { db.execute(uid); } }";
+        assert!(!run(src, &jaxrs_specs()).is_empty());
     }
 
     #[test]
