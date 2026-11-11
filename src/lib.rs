@@ -2,8 +2,8 @@
 //! which lives in `main.rs`. One module per stage of the product:
 //!
 //! - [`scan`]: finds the files, runs the rules and the taint analysis.
-//! - [`rules`]: the rules folder (plain `.sca` files and rule packs),
-//!   client keys and custom rules.
+//! - [`rules`]: the catalog pack next to the binary, plain rule folders
+//!   and custom rules.
 //! - [`report`]: turns findings into HTML, SARIF, SBOM and JSON output.
 //! - [`project`]: what belongs to the scanned project (configuration,
 //!   suppressions, dependencies, database schema, its test suite).

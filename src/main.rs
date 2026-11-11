@@ -313,154 +313,82 @@ fn scope_line(
         .replace("{exclude}", &exclude)
 }
 
-/// Rules folder for `scan` and `list-rules` (ADR-0039): the `--rules`
-/// value, else `rules/` next to the executable. It must hold at least one
-/// rule source, a `.sca` file or a `*.scapack` pack; otherwise the command
-/// stops with exit code 2 and names the folder searched, rather than
+/// Catalog for `scan` and `list-rules` (ADR-0040): the `--rules` value
+/// (a pack file, or a folder holding at least one `.sca` file), else
+/// `rules.scapack` next to the executable. Anything else stops the
+/// command with exit code 2 and names the path searched, rather than
 /// running with no rule.
-fn resolve_rules_dir(
+fn resolve_rules_path(
     rules: Option<PathBuf>,
     script_locale: &serde_json::Value,
 ) -> Result<PathBuf, ExitCode> {
-    let explicit = rules.is_some();
-    let dir = rules
-        .or_else(sast_engine::rules::catalog::default_rules_dir)
-        .unwrap_or_else(|| PathBuf::from("rules"));
-    if explicit && !dir.is_dir() {
+    let fail = |key: &str, path: &Path| {
         emit_error(
-            &sast_engine::i18n::t(script_locale, "scan_invalid_rules_dir")
-                .replace("{path}", &dir.display().to_string()),
+            &sast_engine::i18n::t(script_locale, key)
+                .replace("{path}", &path.display().to_string()),
         );
-        return Err(ExitCode::from(2));
-    }
-    if !sast_engine::rules::catalog::has_rule_files(&dir) {
-        emit_error(
-            &sast_engine::i18n::t(script_locale, "scan_no_rule_files")
-                .replace("{path}", &dir.display().to_string()),
-        );
-        return Err(ExitCode::from(2));
-    }
-    Ok(dir)
-}
-
-/// Client key for `scan`, `list-rules` and `rules key` (ticket #142):
-/// `--key-file`, else the `SAST_ENGINE_KEY` environment variable, else
-/// `sast-engine.key` next to the executable (`client_key::load_client_key`;
-/// the scanned project is not searched, so no key file sits in a client
-/// repository). `Ok(None)` when there is none (demo key only). A key that
-/// cannot be read or parsed stops the command with exit code 2: scanning
-/// on with fewer rules than the client paid for would go unseen. The
-/// message names the source and the problem, never the key.
-fn resolve_client_key(
-    key_file: Option<PathBuf>,
-    script_locale: &serde_json::Value,
-) -> Result<
-    Option<(
-        sast_engine::rules::client_key::KeySource,
-        sast_engine::rules::client_key::ClientKey,
-    )>,
-    ExitCode,
-> {
-    use sast_engine::rules::client_key;
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(Path::to_path_buf));
-    let env_value = std::env::var(client_key::KEY_ENV_VAR).ok();
-    let Some((source, result)) =
-        client_key::load_client_key(key_file, env_value.as_deref(), exe_dir.as_deref())
-    else {
-        return Ok(None);
+        Err(ExitCode::from(2))
     };
-    match result {
-        Ok(key) => Ok(Some((source, key))),
-        Err(error) => {
-            emit_error(
-                &sast_engine::i18n::t(script_locale, "key_file_invalid")
-                    .replace("{path}", &source.to_string())
-                    .replace("{error}", &error),
-            );
-            Err(ExitCode::from(2))
-        }
-    }
-}
-
-/// One grouped notice for the rule packs skipped because they need
-/// another key (ticket #142): `path (key fingerprint)`, comma-separated.
-fn warn_foreign_packs(packs: &[(PathBuf, String)], script_locale: &serde_json::Value) {
-    if packs.is_empty() {
-        return;
-    }
-    let list = packs
-        .iter()
-        .map(|(path, fingerprint)| format!("{} ({fingerprint})", path.display()))
-        .collect::<Vec<_>>()
-        .join(", ");
-    emit_warning(&format!(
-        "[sast-engine] {}",
-        sast_engine::i18n::t(script_locale, "packs_need_other_key")
-            .replace("{count}", &packs.len().to_string())
-            .replace("{packs}", &list)
-    ));
-}
-
-/// `sast-engine rules key`: which key opens the rule packs. Prints the
-/// client name, the key fingerprint and the key file, or says that only
-/// the demo key is available. Never prints the key itself.
-fn run_rules_key_command(lang: &str, key_file: Option<PathBuf>) -> ExitCode {
-    let script_locale = sast_engine::i18n::load_script_locale(lang);
-    let found = match resolve_client_key(key_file, &script_locale) {
-        Ok(found) => found,
-        Err(code) => return code,
-    };
-    let line = match found {
-        Some((source, key)) => {
-            let message = if key.client.is_empty() {
-                "rules_key_unnamed"
+    match rules {
+        Some(path) if path.is_dir() => {
+            if sast_engine::rules::catalog::has_rule_files(&path) {
+                Ok(path)
             } else {
-                "rules_key_client"
-            };
-            sast_engine::i18n::t(&script_locale, message)
-                .replace("{client}", &key.client)
-                .replace("{fingerprint}", &key.fingerprint())
-                .replace("{path}", &source.to_string())
+                fail("scan_no_rule_files", &path)
+            }
         }
-        None => sast_engine::i18n::t(&script_locale, "rules_key_demo_only").replace(
-            "{fingerprint}",
-            &sast_engine::rules::pack_format::key_fingerprint(
-                &sast_engine::rules::pack_format::demo_key(),
-            ),
-        ),
-    };
-    let _ = writeln!(std::io::stdout().lock(), "{line}");
-    ExitCode::SUCCESS
+        Some(path) if path.is_file() => Ok(path),
+        Some(path) => fail("scan_invalid_rules_dir", &path),
+        None => {
+            let pack = sast_engine::rules::catalog::default_pack_path()
+                .unwrap_or_else(|| PathBuf::from(sast_engine::rules::pack_format::PACK_FILE_NAME));
+            if pack.is_file() {
+                Ok(pack)
+            } else {
+                fail("scan_no_rule_pack", &pack)
+            }
+        }
+    }
 }
 
-/// `sast-engine rules pack <dir> --out <file>` (ADR-0037, ticket #143):
-/// packs the client's own `.sca` rules with the client key. Refuses
-/// without a client key (the demo key is public: rules packed with it
-/// would be readable by anyone), refuses an empty folder, and compiles
-/// every file first with the engine's own parser: one invalid file is
-/// reported with its path and line and no pack is written. Client packs
-/// are unsigned; the engine loads them as client rules.
-fn run_rules_pack_command(
-    lang: &str,
-    dir: &Path,
-    out: &Path,
-    name: Option<String>,
-    key_file: Option<PathBuf>,
-) -> ExitCode {
+/// Every rule file of a pack or folder for the `rules` subcommands, or
+/// exit code 2 with the path and the reason.
+fn read_rules_or_exit(
+    path: &Path,
+    script_locale: &serde_json::Value,
+) -> Result<Vec<sast_engine::rules::catalog::RuleSource>, ExitCode> {
+    sast_engine::rules::catalog::read_all_rule_sources(path).map_err(|error| {
+        emit_error(
+            &sast_engine::i18n::t(script_locale, "rules_open_error")
+                .replace("{path}", &path.display().to_string())
+                .replace("{error}", &error),
+        );
+        ExitCode::from(2)
+    })
+}
+
+/// `sast-engine rules pack <dir> --out <file>` (ADR-0040): compiles the
+/// `.sca` files of a folder into one pack, encrypted with the public demo
+/// key. This is how the export script builds the shared repository's
+/// demo pack and how a full catalog is handed to a tester. Refuses an
+/// empty folder, and compiles every file first with the engine's own
+/// parser: one invalid file is reported with its path and line and no
+/// pack is written.
+fn run_rules_pack_command(lang: &str, dir: &Path, out: &Path, name: Option<String>) -> ExitCode {
     use sast_engine::rules::pack_format;
     let script_locale = sast_engine::i18n::load_script_locale(lang);
     let say = |key: &str| sast_engine::i18n::t(&script_locale, key);
-    let key = match resolve_client_key(key_file, &script_locale) {
-        Ok(Some((_, key))) => key,
-        Ok(None) => {
-            emit_error(&say("rules_pack_needs_client_key"));
+    let files = match pack_format::collect_sca_sources(dir) {
+        Ok(files) => files,
+        Err(error) => {
+            emit_error(
+                &say("rules_open_error")
+                    .replace("{path}", &dir.display().to_string())
+                    .replace("{error}", &error),
+            );
             return ExitCode::from(2);
         }
-        Err(code) => return code,
     };
-    let files = pack_format::collect_sca_sources(dir);
     if files.is_empty() {
         emit_error(&say("rules_pack_no_rules").replace("{path}", &dir.display().to_string()));
         return ExitCode::from(2);
@@ -483,9 +411,9 @@ fn run_rules_pack_command(
     let pack_name = name.unwrap_or_else(|| {
         dir.file_name()
             .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "client".to_string())
+            .unwrap_or_else(|| "rules".to_string())
     });
-    let pack = pack_format::write_pack(&pack_name, &files, &key.key);
+    let pack = pack_format::write_pack(&pack_name, &files);
     if let Err(e) = std::fs::write(out, pack) {
         emit_error(&format!("[sast-engine] {}: {e}", out.display()));
         return ExitCode::from(2);
@@ -496,9 +424,84 @@ fn run_rules_pack_command(
         say("rules_pack_written")
             .replace("{path}", &out.display().to_string())
             .replace("{count}", &files.len().to_string())
-            .replace("{fingerprint}", &key.fingerprint())
     );
     ExitCode::SUCCESS
+}
+
+/// `sast-engine rules list <pack>` (ADR-0040): the rule files of a pack
+/// (or folder), one per line with the first 12 hex characters of their
+/// SHA-256 — the value `rules diff` compares.
+fn run_rules_list_command(lang: &str, path: &Path) -> ExitCode {
+    let script_locale = sast_engine::i18n::load_script_locale(lang);
+    let files = match read_rules_or_exit(path, &script_locale) {
+        Ok(files) => files,
+        Err(code) => return code,
+    };
+    let mut out = std::io::stdout().lock();
+    let _ = writeln!(
+        out,
+        "{}",
+        sast_engine::i18n::t(&script_locale, "rules_list_header")
+            .replace("{path}", &path.display().to_string())
+            .replace("{count}", &files.len().to_string())
+    );
+    for (rel, content) in &files {
+        let hash = sast_engine::rules::pack_format::source_sha256(content);
+        let _ = writeln!(out, "  {}  {rel}", &hash[..12]);
+    }
+    ExitCode::SUCCESS
+}
+
+/// `sast-engine rules diff <pack> <folder>` (ADR-0040): what differs
+/// between a compiled pack and the plain rules it should hold — one line
+/// per rule file added (`+`, in the folder only), removed (`-`, in the
+/// pack only) or modified (`~`), then a summary. Exit code 0 when both
+/// hold the same rule files, 1 when they differ (like `diff`), 2 when
+/// either cannot be read.
+fn run_rules_diff_command(lang: &str, pack: &Path, dir: &Path) -> ExitCode {
+    let script_locale = sast_engine::i18n::load_script_locale(lang);
+    let before = match read_rules_or_exit(pack, &script_locale) {
+        Ok(files) => files,
+        Err(code) => return code,
+    };
+    let after = match read_rules_or_exit(dir, &script_locale) {
+        Ok(files) => files,
+        Err(code) => return code,
+    };
+    let diff = sast_engine::rules::pack_format::diff_rule_sources(&before, &after);
+    let mut out = std::io::stdout().lock();
+    let fill = |key: &str| {
+        sast_engine::i18n::t(&script_locale, key)
+            .replace("{pack}", &pack.display().to_string())
+            .replace("{dir}", &dir.display().to_string())
+    };
+    if diff.is_identical() {
+        let _ = writeln!(
+            out,
+            "{}",
+            fill("rules_diff_identical").replace("{count}", &diff.unchanged.to_string())
+        );
+        return ExitCode::SUCCESS;
+    }
+    for (mark, paths) in [
+        ('+', &diff.added),
+        ('-', &diff.removed),
+        ('~', &diff.modified),
+    ] {
+        for rel in paths {
+            let _ = writeln!(out, "{mark} {rel}");
+        }
+    }
+    let _ = writeln!(
+        out,
+        "{}",
+        fill("rules_diff_summary")
+            .replace("{added}", &diff.added.len().to_string())
+            .replace("{removed}", &diff.removed.len().to_string())
+            .replace("{modified}", &diff.modified.len().to_string())
+            .replace("{unchanged}", &diff.unchanged.to_string())
+    );
+    ExitCode::from(1)
 }
 
 /// Custom rules folder of a scan (ticket #84): `--custom-rules-dir`, else
@@ -543,45 +546,28 @@ fn declared_rule_languages(root: &Path, say: impl Fn(&str) -> String) -> Option<
     (!config.languages.is_empty()).then_some(config.languages)
 }
 
-/// Console lines saying what the rules folders gave a scan (ADR-0039,
+/// Console lines saying what the rule sources gave a scan (ADR-0040,
 /// feedback of 2026-11-10: a tester could not tell which rules were
-/// loaded). Per folder: rule files kept over files available and the
-/// folder path, then one line per opened pack; last, the number of rules
-/// kept and the languages they cover.
+/// loaded). Per source: rule files kept over files available and the
+/// pack or folder path; last, the number of rules kept and the languages
+/// they cover.
 fn rule_source_lines(report: &ScanReport, script_locale: &serde_json::Value) -> Vec<String> {
-    use sast_engine::rules::catalog::RuleOrigin;
+    use sast_engine::rules::catalog::RuleSourceKind;
     let say = |key: &str| sast_engine::i18n::t(script_locale, key);
-    let mut lines = Vec::new();
-    for folder in &report.rule_folders {
-        let mut line = say("scan_rules_folder")
-            .replace("{read}", &folder.files_read.to_string())
-            .replace("{available}", &folder.files_available.to_string())
-            .replace("{path}", &folder.dir.display().to_string());
-        if folder.duplicates > 0 {
-            line.push_str(
-                &say("scan_rules_duplicates").replace("{count}", &folder.duplicates.to_string()),
-            );
-        }
-        lines.push(line);
-        for pack in &folder.packs {
-            let origin = match pack.origin {
-                RuleOrigin::Official => say("scan_rules_origin_official"),
-                RuleOrigin::Client => say("scan_rules_origin_client"),
-                RuleOrigin::Builtin => say("scan_rules_origin_demo"),
+    let mut lines: Vec<String> = report
+        .rule_sources
+        .iter()
+        .map(|source| {
+            let key = match source.kind {
+                RuleSourceKind::Pack => "scan_rules_source_pack",
+                RuleSourceKind::Folder => "scan_rules_source_folder",
             };
-            let name = pack
-                .path
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            lines.push(
-                say("scan_rules_pack")
-                    .replace("{name}", &name)
-                    .replace("{origin}", &origin)
-                    .replace("{count}", &pack.rule_files.to_string()),
-            );
-        }
-    }
+            say(key)
+                .replace("{read}", &source.files_read.to_string())
+                .replace("{available}", &source.files_available.to_string())
+                .replace("{path}", &source.path.display().to_string())
+        })
+        .collect();
     lines.push(
         say("scan_rule_languages")
             .replace("{count}", &report.rules_loaded.to_string())
@@ -804,37 +790,41 @@ mod tests {
         std::fs::remove_dir_all(&root).ok();
     }
 
-    /// `rules/builtin` of the repository, the folder `build.rs` copies
+    /// `rules/builtin` of the repository, the folder `build.rs` packs
     /// next to the binary (unit test binaries run from `deps/`, where
-    /// there is none).
+    /// there is no pack).
     fn builtin_rules_dir() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("rules/builtin")
     }
 
-    /// ADR-0038: `--rules` is used when it holds `.sca` files; a folder
-    /// without any, or a path that is not a folder, stops the command
-    /// with exit code 2.
+    /// ADR-0040: `--rules` takes a pack file, or a folder holding `.sca`
+    /// files; a folder without any, or a path that does not exist, stops
+    /// the command with exit code 2.
     #[test]
-    fn test_resolve_rules_dir_requires_rule_files() {
+    fn test_resolve_rules_path_accepts_pack_or_rule_folder() {
         let parent =
             std::env::temp_dir().join(format!("sast_resolve_rules_{}", std::process::id()));
         let empty = parent.join("empty");
         std::fs::create_dir_all(&empty).unwrap();
+        let pack = parent.join("rules.scapack");
+        std::fs::write(&pack, b"any file: opened at scan time").unwrap();
         let locale = sast_engine::i18n::load_script_locale("en");
 
-        let found = resolve_rules_dir(Some(builtin_rules_dir()), &locale);
-        let no_rules = resolve_rules_dir(Some(empty), &locale);
-        let not_a_dir = resolve_rules_dir(Some(parent.join("missing")), &locale);
+        let folder = resolve_rules_path(Some(builtin_rules_dir()), &locale);
+        let file = resolve_rules_path(Some(pack.clone()), &locale);
+        let no_rules = resolve_rules_path(Some(empty), &locale);
+        let missing = resolve_rules_path(Some(parent.join("missing")), &locale);
         std::fs::remove_dir_all(&parent).ok();
 
-        assert_eq!(found.ok(), Some(builtin_rules_dir()));
+        assert_eq!(folder.ok(), Some(builtin_rules_dir()));
+        assert_eq!(file.ok(), Some(pack));
         assert_eq!(no_rules.err(), Some(ExitCode::from(2)));
-        assert_eq!(not_a_dir.err(), Some(ExitCode::from(2)));
+        assert_eq!(missing.err(), Some(ExitCode::from(2)));
     }
 
     /// Ticket #84: custom rules are never mixed into an explicit
     /// `--rules <DIR>`; otherwise the given folder, else
-    /// `~/.sast-engine/custom-rules` (ADR-0039).
+    /// `~/.sast-engine/custom-rules` (ADR-0039, kept by ADR-0040).
     #[test]
     fn test_resolve_custom_rules_dir_ignored_with_explicit_rules() {
         let given = Some(PathBuf::from("/tmp/my-rules"));
@@ -876,7 +866,6 @@ mod tests {
         run_scan_command(ScanArgs {
             path: root.clone(),
             rules: Some(builtin_rules_dir()),
-            key_file: None,
             format: "text".into(),
             lang: "en".into(),
             log_format: "text".into(),
@@ -899,7 +888,6 @@ mod tests {
             disable_rule: vec![],
             severity: None,
             custom_rules_dir: None,
-            rule_updates_dir: None,
             advisories_dir: None,
             brand_file: None,
             sbom: false,
@@ -1159,20 +1147,13 @@ enum Command {
     Scan {
         /// Path of the project to scan.
         path: PathBuf,
-        /// Rules folder: plain `.sca` files laid out by language
-        /// (`<language>/<category>/<rule>.sca`) and encrypted rule packs
-        /// (`*.scapack`), ADR-0039 — default: `rules/` next to the
-        /// executable. Only the rules of the project's languages are kept.
-        /// With this option, the custom rules folder and the update packs
-        /// are not loaded.
+        /// Rules: a rule pack (`*.scapack`) or a folder of plain `.sca`
+        /// files laid out by language (`<language>/<category>/<rule>.sca`),
+        /// ADR-0040 — default: `rules.scapack` next to the executable.
+        /// Only the rules of the project's languages are kept. With this
+        /// option, the custom rules folder is not loaded.
         #[arg(long)]
         rules: Option<PathBuf>,
-        /// Client key file (ADR-0037) that opens the client's rule packs —
-        /// default: the `SAST_ENGINE_KEY` environment variable, then
-        /// `sast-engine.key` next to the executable. Without one, only the
-        /// demo key is available.
-        #[arg(long)]
-        key_file: Option<PathBuf>,
         /// Output format: `text`, `sarif` or `html`.
         #[arg(long, default_value = "html")]
         format: String,
@@ -1252,12 +1233,6 @@ enum Command {
         /// (total, exclusive replacement).
         #[arg(long)]
         custom_rules_dir: Option<PathBuf>,
-        /// Directory of Ed25519-signed rule update packs (ticket #85)
-        /// — default: `rules-updates/` next to the executable. Has no
-        /// effect if `--rules <DIR>` is provided (total, exclusive
-        /// replacement).
-        #[arg(long)]
-        rule_updates_dir: Option<PathBuf>,
         /// Offline advisory database of published vulnerabilities, read by
         /// `--with-deps` — default: `advisories/` next
         /// to the executable. Missing: no vulnerability matching, the rest
@@ -1267,7 +1242,7 @@ enum Command {
         advisories_dir: Option<PathBuf>,
         /// `brand.json` runtime customization file (ticket #87/spec
         /// #83) — default: `brand.json` next to the executable
-        /// (mirrors `rule_updates_dir` above).
+        /// (like `advisories_dir` above).
         /// Absent or invalid: strictly unchanged behavior ("CodeFixture"
         /// defaults).
         #[arg(long)]
@@ -1288,17 +1263,13 @@ enum Command {
         /// Display language (`en`/`fr`/`es`/`de`).
         #[arg(long, default_value = "en")]
         lang: String,
-        /// Rules folder — default: `rules/` next to the executable
-        /// (same as `scan --rules`). Every language is listed, plain files
-        /// and packs.
+        /// Rules: a pack or a folder of `.sca` files — default:
+        /// `rules.scapack` next to the executable (same as `scan --rules`).
+        /// Every language is listed.
         #[arg(long)]
         rules: Option<PathBuf>,
-        /// Client key file — default: the `SAST_ENGINE_KEY` environment
-        /// variable, then `sast-engine.key` next to the executable.
-        #[arg(long)]
-        key_file: Option<PathBuf>,
     },
-    /// Rule pack tools (ADR-0037).
+    /// Rule pack tools (ADR-0040).
     Rules {
         #[command(subcommand)]
         action: RulesAction,
@@ -1320,33 +1291,39 @@ enum Command {
 /// Subcommands of `sast-engine rules`.
 #[derive(Subcommand)]
 enum RulesAction {
-    /// Shows which key opens the rule packs: the client key file found
-    /// (client name and fingerprint, never the key) or the demo key only.
-    Key {
-        /// Client key file — default: the `SAST_ENGINE_KEY` environment
-        /// variable, then `sast-engine.key` next to the executable.
+    /// Compiles the `.sca` rules of a folder into one rule pack, encrypted
+    /// with the public demo key. Every file is checked first; one invalid
+    /// file and no pack is written.
+    Pack {
+        /// Folder of `.sca` rule files (searched recursively).
+        dir: PathBuf,
+        /// Pack file to write: `rules.scapack` next to the executable is
+        /// the one a scan reads.
         #[arg(long)]
-        key_file: Option<PathBuf>,
+        out: PathBuf,
+        /// Pack name stored in its header — default: the folder name.
+        #[arg(long)]
+        name: Option<String>,
         /// Message language (`en`/`fr`/`es`/`de`).
         #[arg(long, default_value = "en")]
         lang: String,
     },
-    /// Encrypts the client's own `.sca` rules of a folder into a rule
-    /// pack, with the client key (never the public demo key). Every file
-    /// is checked first; one invalid file and no pack is written.
-    Pack {
-        /// Folder of `.sca` rule files (searched recursively).
+    /// Lists the rule files of a pack (or folder) with the start of their
+    /// SHA-256.
+    List {
+        /// Rule pack (`*.scapack`) or folder of `.sca` files.
+        pack: PathBuf,
+        /// Message language (`en`/`fr`/`es`/`de`).
+        #[arg(long, default_value = "en")]
+        lang: String,
+    },
+    /// Compares a pack with a folder of plain `.sca` files: rule files
+    /// added, removed and modified. Exit code 0 if identical, 1 if not.
+    Diff {
+        /// Rule pack (`*.scapack`), or a folder.
+        pack: PathBuf,
+        /// Folder of `.sca` files (for example `rules/builtin`), or a pack.
         dir: PathBuf,
-        /// Pack file to write (`*.scapack`), to copy into the packs folder.
-        #[arg(long)]
-        out: PathBuf,
-        /// Pack name shown in messages — default: the folder name.
-        #[arg(long)]
-        name: Option<String>,
-        /// Client key file — default: the `SAST_ENGINE_KEY` environment
-        /// variable, then `sast-engine.key` next to the executable.
-        #[arg(long)]
-        key_file: Option<PathBuf>,
         /// Message language (`en`/`fr`/`es`/`de`).
         #[arg(long, default_value = "en")]
         lang: String,
@@ -1361,7 +1338,10 @@ impl Command {
             Command::Scan { lang, .. }
             | Command::ListRules { lang, .. }
             | Command::Rules {
-                action: RulesAction::Key { lang, .. } | RulesAction::Pack { lang, .. },
+                action:
+                    RulesAction::Pack { lang, .. }
+                    | RulesAction::List { lang, .. }
+                    | RulesAction::Diff { lang, .. },
             }
             | Command::CreateRule { lang, .. } => lang,
         }
@@ -1444,7 +1424,6 @@ fn dispatch(command: Command) -> ExitCode {
         Command::Scan {
             path,
             rules,
-            key_file,
             format,
             lang,
             log_format,
@@ -1467,7 +1446,6 @@ fn dispatch(command: Command) -> ExitCode {
             disable_rule,
             severity,
             custom_rules_dir,
-            rule_updates_dir,
             advisories_dir,
             brand_file,
             sbom,
@@ -1475,7 +1453,6 @@ fn dispatch(command: Command) -> ExitCode {
         } => run_scan_command(ScanArgs {
             path,
             rules,
-            key_file,
             format,
             lang,
             log_format,
@@ -1498,7 +1475,6 @@ fn dispatch(command: Command) -> ExitCode {
             disable_rule,
             severity,
             custom_rules_dir,
-            rule_updates_dir,
             advisories_dir,
             brand_file,
             sbom,
@@ -1509,24 +1485,22 @@ fn dispatch(command: Command) -> ExitCode {
             builtin_rules,
             lang,
         } => run_create_rule_command(custom_rules, builtin_rules, lang),
-        Command::ListRules {
-            lang,
-            rules,
-            key_file,
-        } => run_list_rules_command(&lang, rules, key_file),
-        Command::Rules {
-            action: RulesAction::Key { key_file, lang },
-        } => run_rules_key_command(&lang, key_file),
+        Command::ListRules { lang, rules } => run_list_rules_command(&lang, rules),
         Command::Rules {
             action:
                 RulesAction::Pack {
                     dir,
                     out,
                     name,
-                    key_file,
                     lang,
                 },
-        } => run_rules_pack_command(&lang, &dir, &out, name, key_file),
+        } => run_rules_pack_command(&lang, &dir, &out, name),
+        Command::Rules {
+            action: RulesAction::List { pack, lang },
+        } => run_rules_list_command(&lang, &pack),
+        Command::Rules {
+            action: RulesAction::Diff { pack, dir, lang },
+        } => run_rules_diff_command(&lang, &pack, &dir),
     }
 }
 
@@ -1579,47 +1553,24 @@ fn rule_display_name(
 }
 
 /// `sast-engine list-rules` — port of `Audit/sca/cli.py::list_rules`
-/// on the whole rules folder, every language: header with the total, then one block per
+/// on the whole catalog, every language: header with the total, then one block per
 /// category (translated title, rule count, `[disabled by default]` for
 /// the opt-in ones) listing `id` and display name. The "project
 /// fixtures" footer of the Python version is not ported: it reads the
 /// per-project registry `Audit/projects/<slug>/`, classified out of
 /// scope (issue #23).
-fn run_list_rules_command(
-    lang: &str,
-    rules: Option<PathBuf>,
-    key_file: Option<PathBuf>,
-) -> ExitCode {
+fn run_list_rules_command(lang: &str, rules: Option<PathBuf>) -> ExitCode {
     use sast_engine::rules::catalog;
     let script_locale = sast_engine::i18n::load_script_locale(lang);
     let report_locale = sast_engine::i18n::load_report_locale(lang);
-    let rules_dir = match resolve_rules_dir(rules, &script_locale) {
-        Ok(dir) => dir,
+    let rules_path = match resolve_rules_path(rules, &script_locale) {
+        Ok(path) => path,
         Err(code) => return code,
     };
-    let client_key = match resolve_client_key(key_file, &script_locale) {
-        Ok(found) => found.map(|(_, key)| key),
+    let sources = match read_rules_or_exit(&rules_path, &script_locale) {
+        Ok(files) => files,
         Err(code) => return code,
     };
-    let every_language: Vec<String> = catalog::RULE_LANGUAGES
-        .iter()
-        .map(|l| l.to_string())
-        .collect();
-    let folder = catalog::load_rule_folder(
-        &rules_dir,
-        &every_language,
-        client_key.as_ref().map(|k| &k.key),
-        catalog::RuleOrigin::Builtin,
-    );
-    for (source, reason) in &folder.errors {
-        emit_warning(&format!("[sast-engine] {}: {reason}", source.display()));
-    }
-    warn_foreign_packs(&folder.foreign_packs, &script_locale);
-    let sources: Vec<catalog::RuleSource> = folder
-        .files
-        .into_iter()
-        .map(|file| (file.rel_path, file.content))
-        .collect();
     let listing = catalog::rule_listing(&sources);
     let rules_label = sast_engine::i18n::t(&script_locale, "rules_count");
     // `writeln!` with ignored errors rather than `println!`: the latter
@@ -1751,7 +1702,6 @@ fn write_sbom(
 struct ScanArgs {
     path: PathBuf,
     rules: Option<PathBuf>,
-    key_file: Option<PathBuf>,
     format: String,
     lang: String,
     log_format: String,
@@ -1774,7 +1724,6 @@ struct ScanArgs {
     disable_rule: Vec<String>,
     severity: Option<String>,
     custom_rules_dir: Option<PathBuf>,
-    rule_updates_dir: Option<PathBuf>,
     advisories_dir: Option<PathBuf>,
     brand_file: Option<PathBuf>,
     sbom: bool,
@@ -1785,7 +1734,6 @@ fn run_scan_command(args: ScanArgs) -> ExitCode {
     let ScanArgs {
         path,
         rules,
-        key_file,
         format,
         lang,
         log_format,
@@ -1808,7 +1756,6 @@ fn run_scan_command(args: ScanArgs) -> ExitCode {
         disable_rule,
         severity,
         custom_rules_dir,
-        rule_updates_dir,
         advisories_dir,
         brand_file,
         sbom,
@@ -1829,18 +1776,12 @@ fn run_scan_command(args: ScanArgs) -> ExitCode {
         );
         return ExitCode::from(2);
     }
-    // ADR-0039: `--rules <DIR>`, else `rules/` next to the executable. A
-    // folder without any `.sca` file or pack would scan with no rule at
-    // all, so it stops here with the folder that was searched.
+    // ADR-0040: `--rules <PATH>`, else `rules.scapack` next to the
+    // executable. A missing pack or a folder without any `.sca` file would
+    // scan with no rule at all, so it stops here with the path searched.
     let explicit_rules = rules.is_some();
-    let rules_dir = match resolve_rules_dir(rules, &script_locale) {
-        Ok(dir) => dir,
-        Err(code) => return code,
-    };
-    // Client key (ticket #142): an invalid key file stops here rather
-    // than silently scanning with fewer rules than the client paid for.
-    let client_key = match resolve_client_key(key_file, &script_locale) {
-        Ok(found) => found.map(|(_, key)| key),
+    let rules_path = match resolve_rules_path(rules, &script_locale) {
+        Ok(path) => path,
         Err(code) => return code,
     };
     if format != "text" && format != "sarif" && format != "html" {
@@ -2021,20 +1962,6 @@ fn run_scan_command(args: ScanArgs) -> ExitCode {
         sast_engine::project::project_config::read_category_overrides_config(&path);
 
     let custom_rules_dir = resolve_custom_rules_dir(explicit_rules, custom_rules_dir);
-    // Default: next to the executable (ticket #85/spec #82, mirrors
-    // `{SCRIPT_DIR}/rules-updates/` on the Python side). `None` with
-    // `--rules <DIR>`, like the custom rules. The directory doesn't need
-    // to exist nor contain a valid pack: `rule_packs.rs` checks `is_dir()`
-    // and each manifest's signature before any rule read.
-    let rule_updates_dir = if explicit_rules {
-        None
-    } else {
-        rule_updates_dir.or_else(|| {
-            std::env::current_exe()
-                .ok()
-                .and_then(|exe| exe.parent().map(|dir| dir.join("rules-updates")))
-        })
-    };
     // Default: next to the executable, where `sast-advisories update`
     // writes by default when both binaries share a directory (ADR-0035).
     // A missing directory only disables vulnerability matching.
@@ -2044,8 +1971,8 @@ fn run_scan_command(args: ScanArgs) -> ExitCode {
             .and_then(|exe| exe.parent().map(|dir| dir.join("advisories")))
     });
 
-    // Default: next to the executable (ticket #87/spec #83, mirrors
-    // `rule_updates_dir` above). `load_brand_file`
+    // Default: next to the executable (ticket #87/spec #83, like
+    // `advisories_dir` above). `load_brand_file`
     // returns `None` on any anomaly (missing file, unreadable,
     // invalid JSON) — safe, silent fallback to `Brand::default()`
     // (all the "CodeFixture" defaults), never a blocking error.
@@ -2103,8 +2030,7 @@ fn run_scan_command(args: ScanArgs) -> ExitCode {
     let config = ScanConfig {
         root: path,
         include_paths,
-        rules_dir,
-        client_key,
+        rules_path,
         target_languages,
         suppress_file,
         exclude_patterns,
@@ -2127,7 +2053,6 @@ fn run_scan_command(args: ScanArgs) -> ExitCode {
             Some(print_phase_progress)
         },
         custom_rules_dir,
-        rule_updates_dir,
         advisories_dir,
         script_locale: Some(script_locale.clone()),
         brand_prefix: effective_prefix(&brand),
@@ -2149,8 +2074,7 @@ fn run_scan_command(args: ScanArgs) -> ExitCode {
                 .replace("{error}", &err.to_string()),
         );
     }
-    warn_foreign_packs(&report.skipped_rule_packs, &script_locale);
-    // ADR-0039: where the rules came from and how many were kept, then the
+    // ADR-0040: where the rules came from and how many were kept, then the
     // languages found in the project but left out of `languages`, whose
     // files got no rule — a warning, never suppressed by `--quiet`.
     for line in rule_source_lines(&report, &script_locale) {

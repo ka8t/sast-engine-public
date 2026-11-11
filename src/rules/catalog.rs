@@ -1,35 +1,26 @@
-//! The rule catalog, read at run time from a rules folder (ADR-0039):
-//! `rules/` next to the executable by default, `--rules <DIR>` otherwise.
-//! The folder holds two kinds of rule sources, read side by side:
+//! The rule catalog, read at run time (ADR-0040). A scan reads one rule
+//! source:
 //!
-//! - **plain `.sca` files**, laid out by language
-//!   (`<language>/<category>/<rule>.sca`). `build.rs` copies
-//!   `rules/builtin` there: the full catalog in this repository, the demo
-//!   rules in the shared one, so every build is usable as it is;
-//! - **rule packs** (`*.scapack`, ADR-0037), directly in the folder: rule
-//!   files encrypted with the public demo key or with a client key, signed
-//!   when CodeFixture built them. This is how the editor hands a client
-//!   the rules beyond the demo set.
+//! - **the catalog pack** `rules.scapack` next to the running executable
+//!   (the default): every rule file of the catalog in one file, encrypted
+//!   with the public demo key (`pack_format`). `build.rs` writes it, from
+//!   `rules/builtin` in the private repository (full catalog) or from the
+//!   committed demo pack in the shared one;
+//! - **or `--rules <PATH>`**: another pack, or a folder of plain `.sca`
+//!   files laid out by language (`<language>/<category>/<rule>.sca`), for
+//!   development and tests.
+//!
+//! The custom rules folder (`~/.sast-engine/custom-rules`) is a plain
+//! folder read in addition, labelled as the client's own rules.
 //!
 //! A scan only keeps the rule files of its target languages
-//! ([`is_targeted_rule_path`]): the plain folders of the other languages
-//! are listed, for the counts, but never read. When the same rule file
-//! (same relative path, `python/security/eval_usage.sca`) exists in
-//! several sources, it is read once, from the first source in this order:
-//! signed CodeFixture packs, client packs, plain files, demo-key packs
-//! ([`SourceRank`]). A plain file thus wins over a demo-key pack left over
-//! from an older build, and a delivered pack wins over the demo copy of
-//! the same rule.
-//!
-//! Signed packs (ticket #144) are checked against the CodeFixture public
-//! key before they are decrypted; one whose signature does not verify is
-//! rejected, never loaded as client rules. Every compiled rule carries
-//! its origin (`RuleOrigin`) for the report.
+//! ([`is_targeted_rule_path`]): the files of the other languages are
+//! counted but never compiled. Every compiled rule carries its origin
+//! (`RuleOrigin`) for the report.
 
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use super::pack_format::{self, PACK_EXTENSION};
+use super::pack_format::{self, PACK_FILE_NAME};
 
 pub use super::pack_format::RuleSource;
 
@@ -48,16 +39,12 @@ pub const RULE_LANGUAGES: [&str; 8] = [
 ];
 
 /// Where a rule comes from, written as `"origin"` on each compiled rule so
-/// the report can tell CodeFixture's rules from the client's (ADR-0037).
+/// the report can tell the catalog's rules from the client's own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuleOrigin {
-    /// Plain `.sca` file of the rules folder, or pack encrypted with the
-    /// public demo key: the catalog the build ships.
+    /// The catalog: the pack, or the folder given with `--rules`.
     Builtin,
-    /// Signed pack whose CodeFixture signature verified.
-    Official,
-    /// The client's own rules: an unsigned pack encrypted with the client
-    /// key, or a file of the custom rules folder.
+    /// A file of the custom rules folder.
     Client,
 }
 
@@ -66,33 +53,28 @@ impl RuleOrigin {
     pub fn as_str(self) -> &'static str {
         match self {
             RuleOrigin::Builtin => "builtin",
-            RuleOrigin::Official => "official",
             RuleOrigin::Client => "client",
         }
     }
 }
 
-/// Order in which the sources of one rules folder are read; for a rule
-/// file found in several of them, the first one wins (module comment).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum SourceRank {
-    OfficialPack,
-    ClientPack,
-    PlainFile,
-    DemoPack,
+/// Kind of a rule source: one pack file, or a folder of `.sca` files.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuleSourceKind {
+    /// A `.scapack` file.
+    Pack,
+    /// A folder of plain `.sca` files.
+    Folder,
 }
-
-/// Checks the signature of a signed pack: `(signed bytes, signature)`.
-pub type SignatureCheck<'a> = &'a dyn Fn(&[u8], &[u8; 64]) -> Result<(), String>;
 
 /// One rule file kept for a scan.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LoadedRuleFile {
-    /// Path relative to the rules folder or inside the pack, with `/`
-    /// separators: the key used to read each rule file once.
+    /// Path relative to the folder or inside the pack, with `/`
+    /// separators.
     pub rel_path: String,
     /// Name given to the compiler, shown in rule errors: the full path of
-    /// a plain file, `<pack>.scapack:<relative path>` for a pack entry.
+    /// a plain file, `<pack path>:<relative path>` for a pack entry.
     pub source_name: String,
     /// `.sca` source.
     pub content: String,
@@ -100,121 +82,62 @@ pub struct LoadedRuleFile {
     pub origin: RuleOrigin,
 }
 
-/// A rule pack opened while loading a rules folder.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OpenedPack {
-    /// Pack file.
+/// What a rule source gave a scan: the rule files kept, plus the counts
+/// the CLI prints so a reader sees what was actually loaded.
+#[derive(Debug)]
+pub struct LoadedRules {
+    /// The pack file or the folder.
     pub path: PathBuf,
-    /// Origin of its rules: `Official` (signed), `Client` or `Builtin`
-    /// (demo key).
-    pub origin: RuleOrigin,
-    /// Rule files it holds, every language.
-    pub rule_files: usize,
-}
-
-/// What a rules folder gave a scan: the rule files kept, plus the counts
-/// the CLI prints so a reader sees what was actually loaded (feedback of
-/// 2026-11-10: a full catalog copied in an unread format went unnoticed).
-#[derive(Debug, Default)]
-pub struct LoadedRuleFolder {
-    /// The rules folder.
-    pub dir: PathBuf,
-    /// Rule files kept for the target languages, in reading order
-    /// ([`SourceRank`], then path).
+    /// Pack or folder.
+    pub kind: RuleSourceKind,
+    /// Rule files kept for the target languages, sorted by path.
     pub files: Vec<LoadedRuleFile>,
-    /// Plain `.sca` files found in the folder, every language.
-    pub plain_files: usize,
-    /// Packs opened, in file name order.
-    pub packs: Vec<OpenedPack>,
-    /// Distinct rule files available, every source and language merged.
+    /// Rule files the source holds, every language.
     pub files_available: usize,
-    /// Rule files found again in a later source and not read twice.
-    pub duplicates: usize,
-    /// Packs or files that could not be read or opened, with the reason.
-    /// One unreadable source never stops the others.
+    /// The pack or files that could not be read or opened, with the
+    /// reason. One unreadable file never stops the others.
     pub errors: Vec<(PathBuf, String)>,
-    /// Valid packs skipped because they need a key the engine does not
-    /// have: path and the fingerprint of the key they need.
-    pub foreign_packs: Vec<(PathBuf, String)>,
 }
 
-/// The counts of a [`LoadedRuleFolder`], without the rule sources: what
-/// the scan report keeps for the CLI's rule lines.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct RuleFolderSummary {
-    /// The rules folder.
-    pub dir: PathBuf,
-    /// Plain `.sca` files found, every language.
-    pub plain_files: usize,
-    /// Packs opened.
-    pub packs: Vec<OpenedPack>,
-    /// Distinct rule files available, every source and language merged.
+/// The counts of a [`LoadedRules`], without the rule sources: what the
+/// scan report keeps for the CLI's rule lines.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuleSourceSummary {
+    /// The pack file or the folder.
+    pub path: PathBuf,
+    /// Pack or folder.
+    pub kind: RuleSourceKind,
+    /// Rule files the source holds, every language.
     pub files_available: usize,
     /// Rule files kept for the target languages.
     pub files_read: usize,
-    /// Rule files found in several sources and read once.
-    pub duplicates: usize,
 }
 
-impl LoadedRuleFolder {
-    /// The counts of this folder, for the scan report.
-    pub fn summary(&self) -> RuleFolderSummary {
-        RuleFolderSummary {
-            dir: self.dir.clone(),
-            plain_files: self.plain_files,
-            packs: self.packs.clone(),
+impl LoadedRules {
+    /// The counts of this source, for the scan report.
+    pub fn summary(&self) -> RuleSourceSummary {
+        RuleSourceSummary {
+            path: self.path.clone(),
+            kind: self.kind,
             files_available: self.files_available,
             files_read: self.files.len(),
-            duplicates: self.duplicates,
         }
     }
 }
 
-/// Default rules folder: `rules/` next to the running executable. `None`
-/// only if the executable path is unknown.
-pub fn default_rules_dir() -> Option<PathBuf> {
+/// Default catalog: `rules.scapack` in the folder of the running
+/// executable, whatever the current folder (ADR-0040). `None` only if the
+/// executable path is unknown.
+pub fn default_pack_path() -> Option<PathBuf> {
     std::env::current_exe()
         .ok()
-        .and_then(|exe| exe.parent().map(|dir| dir.join("rules")))
+        .and_then(|exe| exe.parent().map(|dir| dir.join(PACK_FILE_NAME)))
 }
 
-/// Whether `dir` holds a rule source: a `.sca` file at any depth, or a
-/// `*.scapack` pack directly inside it. The CLI stops on a rules folder
-/// without any, rather than scanning with no rule.
+/// Whether `dir` holds a `.sca` file at any depth. The CLI stops on a
+/// rules folder without any, rather than scanning with no rule.
 pub fn has_rule_files(dir: &Path) -> bool {
-    !pack_files(dir).is_empty() || has_sca_file(dir)
-}
-
-/// Whether `dir` holds a `.sca` file at any depth.
-fn has_sca_file(dir: &Path) -> bool {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return false;
-    };
-    entries.flatten().any(|entry| {
-        let path = entry.path();
-        match entry.file_type() {
-            Ok(t) if t.is_dir() => has_sca_file(&path),
-            Ok(t) if t.is_file() => path.extension().is_some_and(|e| e == "sca"),
-            _ => false,
-        }
-    })
-}
-
-/// The `*.scapack` files directly inside `dir`, sorted by name. Empty if
-/// `dir` is missing or unreadable.
-pub fn pack_files(dir: &Path) -> Vec<PathBuf> {
-    let Ok(read_dir) = std::fs::read_dir(dir) else {
-        return Vec::new();
-    };
-    let mut packs: Vec<PathBuf> = read_dir
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.is_file() && path.extension().and_then(|e| e.to_str()) == Some(PACK_EXTENSION)
-        })
-        .collect();
-    packs.sort();
-    packs
+    !sca_paths(dir).is_empty()
 }
 
 /// Whether a rule file at `rel_path` (relative, `/` separators) is read
@@ -275,172 +198,92 @@ pub fn read_rule_sources(dir: &Path) -> Vec<RuleSource> {
         .collect()
 }
 
-/// Loads the rule files of `dir` for the rule languages `languages`:
-/// plain `.sca` files and the packs that the demo key or `client_key`
-/// opens, checking signed packs with the CodeFixture public key of this
-/// build. `plain_origin` labels the plain files: `Builtin` for the rules
-/// folder, `Client` for the custom rules folder.
-pub fn load_rule_folder(
-    dir: &Path,
-    languages: &[String],
-    client_key: Option<&[u8; 32]>,
-    plain_origin: RuleOrigin,
-) -> LoadedRuleFolder {
-    load_rule_folder_checked(
-        dir,
-        languages,
-        client_key,
-        plain_origin,
-        &super::rule_packs::verify_pack_signature,
-    )
+/// Every rule file of a pack or a folder, every language, sorted by path:
+/// what `list-rules` and `rules diff` read. `Err` if the pack cannot be
+/// opened or the path is neither a pack nor a folder.
+pub fn read_all_rule_sources(path: &Path) -> Result<Vec<RuleSource>, String> {
+    if path.is_dir() {
+        return pack_format::collect_sca_sources(path);
+    }
+    let bytes = std::fs::read(path).map_err(|e| format!("unreadable rule pack: {e}"))?;
+    pack_format::open_pack(&bytes).map(|(_, files)| files)
 }
 
-/// [`load_rule_folder`] with the signature check passed in (tests use
-/// their own CodeFixture key pair).
-///
-/// Approach: open every pack first (each one is decrypted once, the key
-/// chosen from the fingerprint in its header), list the plain files, then
-/// walk all sources in [`SourceRank`] order, keeping the first copy of
-/// each relative path. Only the plain files that are kept and targeted
-/// are read from disk.
-pub fn load_rule_folder_checked(
-    dir: &Path,
-    languages: &[String],
-    client_key: Option<&[u8; 32]>,
-    plain_origin: RuleOrigin,
-    check_signature: SignatureCheck,
-) -> LoadedRuleFolder {
-    let mut folder = LoadedRuleFolder {
-        dir: dir.to_path_buf(),
-        ..LoadedRuleFolder::default()
-    };
-    let mut ranked: Vec<(SourceRank, Vec<RuleSource>, Option<&Path>, RuleOrigin)> = Vec::new();
-    let opened = open_packs(dir, client_key, check_signature, &mut folder);
-    for (pack, files) in &opened {
-        let rank = match pack.origin {
-            RuleOrigin::Official => SourceRank::OfficialPack,
-            RuleOrigin::Client => SourceRank::ClientPack,
-            RuleOrigin::Builtin => SourceRank::DemoPack,
-        };
-        ranked.push((rank, files.clone(), Some(pack.path.as_path()), pack.origin));
+/// Loads the rule files of `path` for the rule languages `languages`: a
+/// pack file, or a folder of `.sca` files. `origin` labels the rules:
+/// `Builtin` for the catalog, `Client` for the custom rules folder.
+pub fn load_rules(path: &Path, languages: &[String], origin: RuleOrigin) -> LoadedRules {
+    if path.is_dir() {
+        load_rule_folder(path, languages, origin)
+    } else {
+        load_rule_pack(path, languages, origin)
     }
-    // Plain files: paths only, the content is read once a file is kept.
-    let plain: Vec<RuleSource> = sca_paths(dir)
-        .into_iter()
-        .map(|rel| (rel, String::new()))
-        .collect();
-    folder.plain_files = plain.len();
-    ranked.push((SourceRank::PlainFile, plain, None, plain_origin));
-    // Stable sort: packs of the same rank stay in file name order.
-    ranked.sort_by_key(|(rank, ..)| *rank);
+}
 
-    let mut seen: HashSet<String> = HashSet::new();
-    for (_, files, pack_path, origin) in ranked {
-        for (rel, content) in files {
-            if !seen.insert(rel.clone()) {
-                folder.duplicates += 1;
-                continue;
-            }
-            folder.files_available += 1;
-            if !is_targeted_rule_path(&rel, languages) {
-                continue;
-            }
-            let (source_name, content) = match pack_path {
-                Some(pack) => (format!("{}:{rel}", pack.display()), content),
-                None => {
-                    let path = dir.join(&rel);
-                    match std::fs::read_to_string(&path) {
-                        Ok(text) => (path.to_string_lossy().into_owned(), text),
-                        Err(e) => {
-                            folder
-                                .errors
-                                .push((path, format!("unreadable rule file: {e}")));
-                            continue;
-                        }
-                    }
-                }
-            };
-            folder.files.push(LoadedRuleFile {
+/// Loads a pack: decrypted once, then only the targeted files are kept.
+/// A pack that cannot be read or opened gives no file and one error.
+fn load_rule_pack(path: &Path, languages: &[String], origin: RuleOrigin) -> LoadedRules {
+    let mut loaded = LoadedRules {
+        path: path.to_path_buf(),
+        kind: RuleSourceKind::Pack,
+        files: Vec::new(),
+        files_available: 0,
+        errors: Vec::new(),
+    };
+    let opened = std::fs::read(path)
+        .map_err(|e| format!("unreadable rule pack: {e}"))
+        .and_then(|bytes| pack_format::open_pack(&bytes));
+    let files = match opened {
+        Ok((_, files)) => files,
+        Err(reason) => {
+            loaded.errors.push((path.to_path_buf(), reason));
+            return loaded;
+        }
+    };
+    loaded.files_available = files.len();
+    loaded.files = files
+        .into_iter()
+        .filter(|(rel, _)| is_targeted_rule_path(rel, languages))
+        .map(|(rel, content)| LoadedRuleFile {
+            source_name: format!("{}:{rel}", path.display()),
+            rel_path: rel,
+            content,
+            origin,
+        })
+        .collect();
+    loaded
+}
+
+/// Loads a folder of `.sca` files: every file is listed for the counts,
+/// only the targeted ones are read from disk.
+fn load_rule_folder(dir: &Path, languages: &[String], origin: RuleOrigin) -> LoadedRules {
+    let mut loaded = LoadedRules {
+        path: dir.to_path_buf(),
+        kind: RuleSourceKind::Folder,
+        files: Vec::new(),
+        files_available: 0,
+        errors: Vec::new(),
+    };
+    let paths = sca_paths(dir);
+    loaded.files_available = paths.len();
+    for rel in paths {
+        if !is_targeted_rule_path(&rel, languages) {
+            continue;
+        }
+        let path = dir.join(&rel);
+        match std::fs::read_to_string(&path) {
+            Ok(content) => loaded.files.push(LoadedRuleFile {
+                source_name: path.to_string_lossy().into_owned(),
                 rel_path: rel,
-                source_name,
                 content,
                 origin,
-            });
+            }),
+            Err(e) => loaded
+                .errors
+                .push((path, format!("unreadable rule file: {e}"))),
         }
     }
-    folder
-}
-
-/// Opens the packs of `dir` (see [`load_rule_folder_checked`]), recording
-/// each opened pack, error and foreign pack in `folder`. Returns each
-/// opened pack with its rule files.
-fn open_packs(
-    dir: &Path,
-    client_key: Option<&[u8; 32]>,
-    check_signature: SignatureCheck,
-    folder: &mut LoadedRuleFolder,
-) -> Vec<(OpenedPack, Vec<RuleSource>)> {
-    let demo_fingerprint = pack_format::key_fingerprint(&pack_format::demo_key());
-    let mut keys = vec![pack_format::demo_key()];
-    keys.extend(client_key.copied());
-    let mut opened = Vec::new();
-    for path in pack_files(dir) {
-        let bytes = match std::fs::read(&path) {
-            Ok(bytes) => bytes,
-            Err(e) => {
-                folder
-                    .errors
-                    .push((path, format!("unreadable rule pack: {e}")));
-                continue;
-            }
-        };
-        let header = match pack_format::read_header(&bytes) {
-            Ok(header) => header,
-            Err(reason) => {
-                folder.errors.push((path, reason));
-                continue;
-            }
-        };
-        let Some(key) = keys
-            .iter()
-            .find(|key| pack_format::key_fingerprint(key) == header.key_fingerprint)
-        else {
-            folder.foreign_packs.push((path, header.key_fingerprint));
-            continue;
-        };
-        // Signature first: a forged or altered official pack is rejected
-        // before anything is decrypted.
-        let origin = match pack_format::signed_content(&bytes) {
-            Ok(Some((message, signature))) => match check_signature(message, &signature) {
-                Ok(()) => RuleOrigin::Official,
-                Err(reason) => {
-                    folder
-                        .errors
-                        .push((path, format!("signed rule pack rejected: {reason}")));
-                    continue;
-                }
-            },
-            Ok(None) if header.key_fingerprint == demo_fingerprint => RuleOrigin::Builtin,
-            Ok(None) => RuleOrigin::Client,
-            Err(reason) => {
-                folder.errors.push((path, reason));
-                continue;
-            }
-        };
-        match pack_format::open_pack(&bytes, key) {
-            Ok((_, files)) => {
-                let pack = OpenedPack {
-                    path,
-                    origin,
-                    rule_files: files.len(),
-                };
-                folder.packs.push(pack.clone());
-                opened.push((pack, files));
-            }
-            Err(reason) => folder.errors.push((path, reason)),
-        }
-    }
-    opened
+    loaded
 }
 
 /// Compiles rule sources **entirely in memory** (`compile_sca_to_json`
@@ -458,12 +301,12 @@ pub fn compile_catalog(files: &[RuleSource]) -> (Vec<serde_json::Value>, Vec<(Pa
     (rules, errors)
 }
 
-/// Compiles the rule files of a loaded folder: each compiled rule gets
+/// Compiles the rule files of a loaded source: each compiled rule gets
 /// its `"origin"` field, and a rule whose `language` is not in
 /// `languages` is dropped (a rule without `language` is kept). One error
 /// per invalid file, which never stops the others.
-pub fn compile_rule_folder(
-    folder: &LoadedRuleFolder,
+pub fn compile_loaded_rules(
+    loaded: &LoadedRules,
     languages: &[String],
 ) -> (Vec<serde_json::Value>, Vec<(PathBuf, String)>) {
     let targeted = |rule: &serde_json::Value| match rule.get("language").and_then(|v| v.as_str()) {
@@ -472,7 +315,7 @@ pub fn compile_rule_folder(
     };
     let mut rules = Vec::new();
     let mut errors = Vec::new();
-    for file in &folder.files {
+    for file in &loaded.files {
         match crate::scan::parser::compile_sca_to_json(&file.content, &file.source_name) {
             Ok(compiled) => {
                 for mut rule in compiled.into_iter().filter(targeted) {
@@ -534,7 +377,7 @@ pub fn rule_listing(files: &[RuleSource]) -> Vec<RuleListing> {
     by_id.into_values().collect()
 }
 
-/// `rules/builtin` of this repository — the folder `build.rs` copies next
+/// `rules/builtin` of this repository — the folder `build.rs` packs next
 /// to the binary. For tests that scan with the real catalog.
 #[cfg(test)]
 pub(crate) fn builtin_rules_dir() -> PathBuf {
@@ -584,13 +427,8 @@ mod tests {
         RULE.replace("pack_rule", id).replace("python", language)
     }
 
-    /// Relative paths of the kept files, with their origin.
-    fn kept(folder: &LoadedRuleFolder) -> Vec<(String, RuleOrigin)> {
-        folder
-            .files
-            .iter()
-            .map(|f| (f.rel_path.clone(), f.origin))
-            .collect()
+    fn kept(loaded: &LoadedRules) -> Vec<String> {
+        loaded.files.iter().map(|f| f.rel_path.clone()).collect()
     }
 
     #[test]
@@ -649,32 +487,25 @@ mod tests {
         assert!(!has_rule_files(&dir));
         std::fs::create_dir_all(dir.join("python/security")).unwrap();
         std::fs::write(dir.join("python/security/notes.txt"), "x").unwrap();
-        assert!(!has_rule_files(&dir), "only .sca files and packs count");
+        assert!(!has_rule_files(&dir), "only .sca files count");
         std::fs::write(dir.join("python/security/b.sca"), "B").unwrap();
         std::fs::write(dir.join("a.sca"), "A").unwrap();
         assert!(has_rule_files(&dir));
-        assert_eq!(
-            read_rule_sources(&dir),
-            vec![
-                ("a.sca".to_string(), "A".to_string()),
-                ("python/security/b.sca".to_string(), "B".to_string())
-            ]
-        );
+        let expected = vec![
+            ("a.sca".to_string(), "A".to_string()),
+            ("python/security/b.sca".to_string(), "B".to_string()),
+        ];
+        assert_eq!(read_rule_sources(&dir), expected);
+        assert_eq!(read_all_rule_sources(&dir).unwrap(), expected);
         assert!(!has_rule_files(&dir.join("missing")));
-
-        let packs_only = temp_dir("packs_only");
-        let pack = pack_format::write_pack("demo", &[], &pack_format::demo_key());
-        std::fs::write(packs_only.join("demo.scapack"), pack).unwrap();
-        assert!(has_rule_files(&packs_only), "a pack alone is a rule source");
         std::fs::remove_dir_all(&dir).ok();
-        std::fs::remove_dir_all(&packs_only).ok();
     }
 
-    /// Plain files: only the targeted language folders are kept, the
+    /// Plain folder: only the targeted language folders are kept, the
     /// counts cover every language, and the compiled rules are filtered
     /// on their `language` (a flat Java file is read, then dropped).
     #[test]
-    fn test_load_rule_folder_plain_files_for_target_languages() {
+    fn test_load_rules_folder_for_target_languages() {
         let dir = temp_dir("plain");
         std::fs::create_dir_all(dir.join("python/security")).unwrap();
         std::fs::create_dir_all(dir.join("java/security")).unwrap();
@@ -682,324 +513,85 @@ mod tests {
         std::fs::write(dir.join("java/security/j.sca"), rule_named("j", "java")).unwrap();
         std::fs::write(dir.join("flat.sca"), rule_named("flat_java", "java")).unwrap();
 
-        let folder = load_rule_folder(&dir, &langs(&["python"]), None, RuleOrigin::Builtin);
-        let (rules, errors) = compile_rule_folder(&folder, &langs(&["python"]));
+        let loaded = load_rules(&dir, &langs(&["python"]), RuleOrigin::Builtin);
+        let (rules, errors) = compile_loaded_rules(&loaded, &langs(&["python"]));
         std::fs::remove_dir_all(&dir).ok();
 
-        assert_eq!(folder.plain_files, 3);
-        assert_eq!(folder.files_available, 3);
-        assert_eq!(
-            kept(&folder),
-            [
-                ("flat.sca".to_string(), RuleOrigin::Builtin),
-                ("python/security/p.sca".to_string(), RuleOrigin::Builtin)
-            ]
-        );
+        assert_eq!(loaded.kind, RuleSourceKind::Folder);
+        assert_eq!(loaded.files_available, 3);
+        assert_eq!(kept(&loaded), ["flat.sca", "python/security/p.sca"]);
         assert!(errors.is_empty(), "{errors:?}");
         let ids: Vec<&str> = rules.iter().filter_map(|r| r["id"].as_str()).collect();
         assert_eq!(ids, ["p"]);
         assert_eq!(rules[0]["origin"], "builtin");
     }
 
-    /// Feedback of 2026-11-10: a full catalog delivered as a pack next to
-    /// the demo `.sca` files is read. A rule file present in both is read
-    /// once: a plain file wins over a demo-key pack, a client pack wins
-    /// over a plain file.
+    /// ADR-0040: a pack is opened with the demo key, only its targeted
+    /// files are kept, and its rules carry the given origin.
     #[test]
-    fn test_load_rule_folder_merges_packs_and_plain_files_once() {
-        let dir = temp_dir("merge");
-        std::fs::create_dir_all(dir.join("python/security")).unwrap();
-        std::fs::write(
-            dir.join("python/security/demo.sca"),
-            rule_named("demo", "python"),
-        )
-        .unwrap();
-        std::fs::write(
-            dir.join("python/security/edited.sca"),
-            rule_named("edited_plain", "python"),
-        )
-        .unwrap();
-        let demo_pack = vec![
+    fn test_load_rules_pack_for_target_languages() {
+        let dir = temp_dir("pack");
+        let files = vec![
             (
-                "python/security/edited.sca".to_string(),
-                rule_named("edited_stale", "python"),
-            ),
-            (
-                "python/security/more.sca".to_string(),
-                rule_named("more", "python"),
+                "python/security/p.sca".to_string(),
+                rule_named("p", "python"),
             ),
             ("java/security/j.sca".to_string(), rule_named("j", "java")),
         ];
-        std::fs::write(
-            dir.join("builtin.scapack"),
-            pack_format::write_pack("builtin", &demo_pack, &pack_format::demo_key()),
-        )
-        .unwrap();
-        let client_key = [0xC1u8; 32];
-        let client_pack = vec![(
-            "python/security/demo.sca".to_string(),
-            rule_named("demo_full", "python"),
-        )];
-        std::fs::write(
-            dir.join("full.scapack"),
-            pack_format::write_pack("full", &client_pack, &client_key),
-        )
-        .unwrap();
+        let pack = dir.join(PACK_FILE_NAME);
+        std::fs::write(&pack, pack_format::write_pack("builtin", &files)).unwrap();
 
-        let folder = load_rule_folder(
-            &dir,
-            &langs(&["python"]),
-            Some(&client_key),
-            RuleOrigin::Builtin,
-        );
-        let (rules, _) = compile_rule_folder(&folder, &langs(&["python"]));
+        let loaded = load_rules(&pack, &langs(&["python"]), RuleOrigin::Builtin);
+        let (rules, errors) = compile_loaded_rules(&loaded, &langs(&["python"]));
+        let all = read_all_rule_sources(&pack).unwrap();
         std::fs::remove_dir_all(&dir).ok();
 
-        assert!(folder.errors.is_empty(), "{:?}", folder.errors);
-        assert_eq!(folder.packs.len(), 2);
-        assert_eq!(folder.plain_files, 2);
-        assert_eq!(folder.files_available, 4, "demo, edited, more, j");
-        assert_eq!(folder.duplicates, 2);
-        let mut ids: Vec<&str> = rules.iter().filter_map(|r| r["id"].as_str()).collect();
-        ids.sort();
-        assert_eq!(ids, ["demo_full", "edited_plain", "more"]);
-        let origin_of = |id: &str| {
-            rules
-                .iter()
-                .find(|r| r["id"] == id)
-                .and_then(|r| r["origin"].as_str())
-                .map(String::from)
-        };
-        assert_eq!(origin_of("demo_full").as_deref(), Some("client"));
-        assert_eq!(origin_of("more").as_deref(), Some("builtin"));
+        assert_eq!(loaded.kind, RuleSourceKind::Pack);
+        assert!(loaded.errors.is_empty(), "{:?}", loaded.errors);
+        assert_eq!(loaded.files_available, 2);
+        assert_eq!(kept(&loaded), ["python/security/p.sca"]);
+        assert!(
+            loaded.files[0]
+                .source_name
+                .ends_with("rules.scapack:python/security/p.sca")
+        );
+        assert!(errors.is_empty(), "{errors:?}");
+        assert_eq!(rules.len(), 1);
+        assert_eq!(all.len(), 2, "read_all_rule_sources ignores languages");
     }
 
-    /// Ticket #141 acceptance: a corrupt or truncated pack is reported
-    /// with its path and skipped; the other packs still load. Packs are
-    /// read in file name order; non-pack files are ignored. A pack for
-    /// another key is listed apart.
+    /// A missing, corrupt or foreign-key pack gives no rule and one error
+    /// naming the pack.
     #[test]
-    fn test_load_rule_folder_skips_corrupt_truncated_and_foreign_key_packs() {
-        let dir = temp_dir("mixed");
+    fn test_load_rules_pack_errors_are_reported() {
+        let dir = temp_dir("pack_errors");
         let files = vec![("python/r.sca".to_string(), RULE.to_string())];
-        let good = pack_format::write_pack("good", &files, &pack_format::demo_key());
-        std::fs::write(dir.join("b_good.scapack"), &good).unwrap();
-        let mut corrupt = good.clone();
+        let mut corrupt = pack_format::write_pack("builtin", &files);
         let last = corrupt.len() - 1;
         corrupt[last] ^= 0xFF;
-        std::fs::write(dir.join("a_corrupt.scapack"), &corrupt).unwrap();
-        std::fs::write(dir.join("c_truncated.scapack"), &good[..12]).unwrap();
-        let foreign = pack_format::write_pack("client", &files, &[9u8; 32]);
-        std::fs::write(dir.join("d_client.scapack"), &foreign).unwrap();
-        std::fs::write(dir.join("notes.txt"), "not a pack").unwrap();
+        std::fs::write(dir.join("corrupt.scapack"), corrupt).unwrap();
+        let foreign = pack_format::write_pack_with_key("client", &files, &[9u8; 32]);
+        std::fs::write(dir.join("client.scapack"), foreign).unwrap();
+        let python = langs(&["python"]);
 
-        let folder = load_rule_folder(&dir, &langs(&["python"]), None, RuleOrigin::Builtin);
-        std::fs::remove_dir_all(&dir).ok();
-
-        assert_eq!(folder.packs.len(), 1);
-        assert_eq!(
-            kept(&folder),
-            [("python/r.sca".to_string(), RuleOrigin::Builtin)]
-        );
-        let foreign: Vec<String> = folder
-            .foreign_packs
+        let reasons: Vec<String> = ["corrupt.scapack", "client.scapack", "missing.scapack"]
             .iter()
-            .map(|(p, fp)| format!("{}:{fp}", p.file_name().unwrap().to_string_lossy()))
-            .collect();
-        let expected = format!(
-            "d_client.scapack:{}",
-            pack_format::key_fingerprint(&[9u8; 32])
-        );
-        assert_eq!(foreign, [expected]);
-        let reasons: Vec<(String, &str)> = folder
-            .errors
-            .iter()
-            .map(|(p, r)| {
-                (
-                    p.file_name().unwrap().to_string_lossy().into_owned(),
-                    r.as_str(),
-                )
+            .map(|name| {
+                let loaded = load_rules(&dir.join(name), &python, RuleOrigin::Builtin);
+                assert!(loaded.files.is_empty());
+                assert_eq!(loaded.errors.len(), 1);
+                loaded.errors[0].1.clone()
             })
             .collect();
-        assert_eq!(reasons.len(), 2, "{reasons:?}");
-        assert!(reasons[0].0 == "a_corrupt.scapack" && reasons[0].1.contains("corrupt"));
-        assert!(reasons[1].0 == "c_truncated.scapack" && reasons[1].1.contains("truncated"));
-    }
-
-    /// Ticket #142: without a client key only the demo pack opens; with
-    /// client A's key, A's pack opens too and B's pack is skipped.
-    #[test]
-    fn test_load_rule_folder_with_client_key_opens_own_pack_only() {
-        let dir = temp_dir("clients");
-        let (key_a, key_b) = ([0xA1u8; 32], [0xB2u8; 32]);
-        let write = |name: &str, id: &str, key: &[u8; 32]| {
-            let files = vec![(format!("python/{id}.sca"), rule_named(id, "python"))];
-            std::fs::write(
-                dir.join(format!("{name}.scapack")),
-                pack_format::write_pack(name, &files, key),
-            )
-            .unwrap();
-        };
-        write("demo", "demo_rule", &pack_format::demo_key());
-        write("acme", "a_rule", &key_a);
-        write("beta", "b_rule", &key_b);
-        let python = langs(&["python"]);
-
-        let without = load_rule_folder(&dir, &python, None, RuleOrigin::Builtin);
-        let with_a = load_rule_folder(&dir, &python, Some(&key_a), RuleOrigin::Builtin);
         std::fs::remove_dir_all(&dir).ok();
-
-        assert_eq!(
-            kept(&without),
-            [("python/demo_rule.sca".to_string(), RuleOrigin::Builtin)]
-        );
-        assert_eq!(without.foreign_packs.len(), 2);
-        assert_eq!(
-            kept(&with_a),
-            [
-                ("python/a_rule.sca".to_string(), RuleOrigin::Client),
-                ("python/demo_rule.sca".to_string(), RuleOrigin::Builtin)
-            ],
-            "a client pack is read before a demo-key pack"
-        );
-        let skipped: Vec<&str> = with_a
-            .foreign_packs
-            .iter()
-            .map(|(p, _)| p.file_name().unwrap().to_str().unwrap())
-            .collect();
-        assert_eq!(skipped, ["beta.scapack"]);
-        assert_eq!(
-            with_a.foreign_packs[0].1,
-            pack_format::key_fingerprint(&key_b)
-        );
-        assert!(with_a.errors.is_empty());
-    }
-
-    /// Ticket #144 acceptance: a pack signed by CodeFixture loads as
-    /// official; the same pack with one byte changed (payload or header)
-    /// is rejected with a clear message, not loaded as client rules; an
-    /// unsigned client pack loads as client rules; the demo pack keeps
-    /// its own origin. Origins reach the compiled rules.
-    #[test]
-    fn test_signed_packs_official_tampered_rejected_unsigned_client() {
-        use ed25519_dalek::SigningKey;
-        let signing = SigningKey::from_bytes(&[4u8; 32]);
-        let public_hex: String = signing
-            .verifying_key()
-            .to_bytes()
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect();
-        let check = |message: &[u8], signature: &[u8; 64]| {
-            super::super::rule_packs::verify_pack_signature_with_key(
-                message,
-                signature,
-                &public_hex,
-            )
-        };
-        let client_key = [0xC1u8; 32];
-        let official_files = vec![(
-            "python/o.sca".to_string(),
-            rule_named("official_rule", "python"),
-        )];
-        let client_files = vec![(
-            "python/c.sca".to_string(),
-            rule_named("client_rule", "python"),
-        )];
-        let demo_files = vec![(
-            "python/d.sca".to_string(),
-            rule_named("builtin_rule", "python"),
-        )];
-        let official = super::super::rule_packs::write_official_pack(
-            "official",
-            &official_files,
-            &client_key,
-            &signing,
-        );
-        let python = langs(&["python"]);
-
-        let dir = temp_dir("signed");
-        std::fs::write(dir.join("a_official.scapack"), &official).unwrap();
-        let client_pack = pack_format::write_pack("mine", &client_files, &client_key);
-        std::fs::write(dir.join("b_client.scapack"), client_pack).unwrap();
-        let demo_pack = pack_format::write_pack("builtin", &demo_files, &pack_format::demo_key());
-        std::fs::write(dir.join("c_builtin.scapack"), demo_pack).unwrap();
-        let loaded = load_rule_folder_checked(
-            &dir,
-            &python,
-            Some(&client_key),
-            RuleOrigin::Builtin,
-            &check,
-        );
-        let (rules, _) = compile_rule_folder(&loaded, &python);
-
-        // One byte of the encrypted payload, then one byte of the header.
-        let tampered_dir = temp_dir("tampered");
-        let mut payload_changed = official.clone();
-        let in_payload = official.len() - 64 - 5;
-        payload_changed[in_payload] ^= 1;
-        std::fs::write(tampered_dir.join("payload.scapack"), payload_changed).unwrap();
-        let mut header_changed = official.clone();
-        let name_at = official
-            .windows(b"official".len())
-            .position(|w| w == b"official")
-            .unwrap();
-        header_changed[name_at] = b'O';
-        std::fs::write(tampered_dir.join("header.scapack"), header_changed).unwrap();
-        let tampered = load_rule_folder_checked(
-            &tampered_dir,
-            &python,
-            Some(&client_key),
-            RuleOrigin::Builtin,
-            &check,
-        );
-        std::fs::remove_dir_all(&dir).ok();
-        std::fs::remove_dir_all(&tampered_dir).ok();
-
-        assert!(loaded.errors.is_empty(), "{:?}", loaded.errors);
-        let origins: Vec<RuleOrigin> = loaded.packs.iter().map(|p| p.origin).collect();
-        assert_eq!(
-            origins,
-            [
-                RuleOrigin::Official,
-                RuleOrigin::Client,
-                RuleOrigin::Builtin
-            ]
-        );
-        let origin_of = |id: &str| {
-            rules
-                .iter()
-                .find(|r| r["id"] == id)
-                .and_then(|r| r["origin"].as_str())
-                .map(String::from)
-        };
-        assert_eq!(origin_of("official_rule").as_deref(), Some("official"));
-        assert_eq!(origin_of("client_rule").as_deref(), Some("client"));
-        assert_eq!(origin_of("builtin_rule").as_deref(), Some("builtin"));
-
-        assert!(
-            tampered.files.is_empty(),
-            "nothing loads from an altered signed pack"
-        );
-        assert_eq!(tampered.errors.len(), 2, "{:?}", tampered.errors);
-        for (_, reason) in &tampered.errors {
-            assert!(reason.contains("signed rule pack rejected"), "{reason}");
-        }
+        assert!(reasons[0].contains("corrupt"), "{reasons:?}");
+        assert!(reasons[1].contains("needs key"), "{reasons:?}");
+        assert!(reasons[2].contains("unreadable"), "{reasons:?}");
     }
 
     #[test]
-    fn test_pack_files_and_load_rule_folder_on_missing_dir() {
-        let missing = Path::new("/nonexistent/sast/packs");
-        assert!(pack_files(missing).is_empty());
-        let folder = load_rule_folder(missing, &langs(&["python"]), None, RuleOrigin::Builtin);
-        assert!(folder.packs.is_empty() && folder.files.is_empty());
-        assert!(folder.errors.is_empty());
-        assert_eq!(folder.files_available, 0);
-    }
-
-    #[test]
-    fn test_default_rules_dir_is_rules_next_to_executable() {
-        let dir = default_rules_dir().expect("current_exe is known in tests");
-        assert_eq!(dir.file_name().unwrap(), "rules");
+    fn test_default_pack_path_is_next_to_executable() {
+        let path = default_pack_path().expect("current_exe is known in tests");
+        assert_eq!(path.file_name().unwrap(), PACK_FILE_NAME);
     }
 }

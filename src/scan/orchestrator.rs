@@ -248,17 +248,11 @@ pub struct ScanConfig {
     /// even if they aren't explicitly excluded by
     /// `exclude_patterns` — cf. `project_config.rs`.
     pub include_paths: Vec<String>,
-    /// Rules folder (ADR-0039): plain `.sca` files laid out by language
-    /// (`<language>/<category>/<rule>.sca`) and encrypted rule packs
-    /// (`*.scapack`, ADR-0037) directly inside it — `rules/` next to the
-    /// executable for the CLI, `--rules <DIR>` otherwise. Only the rule
-    /// files of `target_languages` are kept (`rules::catalog`).
-    pub rules_dir: PathBuf,
-    /// Client key (ADR-0037, ticket #142) used, with the public demo key,
-    /// to open the packs of `rules_dir` and `custom_rules_dir` — from
-    /// `sast-engine.key`. `None` by default: only packs encrypted with
-    /// the demo key open.
-    pub client_key: Option<crate::rules::client_key::ClientKey>,
+    /// Catalog (ADR-0040): the pack `rules.scapack` next to the executable
+    /// for the CLI, or `--rules <PATH>`, a pack or a folder of plain
+    /// `.sca` files laid out by language (`<language>/<category>/<rule>.sca`).
+    /// Only the rule files of `target_languages` are kept (`rules::catalog`).
+    pub rules_path: PathBuf,
     /// Rule languages declared by the project (`languages` of
     /// `audit.config.json`, as rule tags: `typescript` is `javascript`).
     /// `None`: the languages of the discovered files. With a declared
@@ -278,15 +272,6 @@ pub struct ScanConfig {
     /// home, outside every build output, so no build or `cargo clean`
     /// ever deletes it (ADR-0039).
     pub custom_rules_dir: Option<PathBuf>,
-    /// Directory of Ed25519-signed rule update packs,
-    /// loaded IN ADDITION to the catalog and the custom rules (never as a
-    /// replacement) — ticket #85/spec #82, hardened mirror of
-    /// `_load_update_packs`/`{SCRIPT_DIR}/rules-updates/` on the Python
-    /// side (`rule_engine.py:357-420`). `None` (default): no pack
-    /// consulted. The CLI leaves it `None` with `--rules <DIR>`, same rule
-    /// as `custom_rules_dir` above. Filtered on the target languages like
-    /// the catalog. See `rule_packs.rs` for the verification itself.
-    pub rule_updates_dir: Option<PathBuf>,
     /// Path to `.sca-suppress.json`, if it exists.
     pub suppress_file: Option<PathBuf>,
     /// Exclusion patterns (glob/directory/extension, cf. `discovery`).
@@ -415,11 +400,9 @@ impl Default for ScanConfig {
         Self {
             root: PathBuf::new(),
             include_paths: vec![".".to_string()],
-            rules_dir: PathBuf::new(),
-            client_key: None,
+            rules_path: PathBuf::new(),
             target_languages: None,
             custom_rules_dir: None,
-            rule_updates_dir: None,
             suppress_file: None,
             exclude_patterns: Vec::new(),
             with_tests: false,
@@ -488,18 +471,14 @@ pub struct ScanReport {
     /// `target_languages`, sorted: their files get no rule. Always empty
     /// without a declared list.
     pub undeclared_languages: Vec<String>,
-    /// What each rules folder gave the scan (ADR-0039): the rules folder
-    /// first, then the custom rules folder when it exists — files
-    /// available and kept, packs opened. Printed by the CLI so a reader
-    /// sees what was actually loaded.
-    pub rule_folders: Vec<crate::rules::catalog::RuleFolderSummary>,
+    /// What each rule source gave the scan (ADR-0040): the catalog first,
+    /// then the custom rules folder when it exists — rule files available
+    /// and kept. Printed by the CLI so a reader sees what was actually
+    /// loaded.
+    pub rule_sources: Vec<crate::rules::catalog::RuleSourceSummary>,
     /// Compiled rules kept for the target languages, every source merged,
     /// before the category and `--disable-rule` filters.
     pub rules_loaded: usize,
-    /// Valid rule packs skipped because they need a key other than the
-    /// demo key and the client key (ticket #142): path and the
-    /// fingerprint of the key they need. Reported once by the CLI.
-    pub skipped_rule_packs: Vec<(PathBuf, String)>,
     /// Catalog of compiled rules, indexed by id — needed by the
     /// HTML report (`report::html::generate_html`, `fix_before`/
     /// `fix_after` of `report::findings_html::generate_fix_suggestion`).
@@ -851,15 +830,14 @@ fn taint_finding_to_report(
     }
 }
 
-/// `ReportFinding::rule_source` from the rule's `"origin"` (ADR-0037,
-/// tickets #143/#144, set by `rules::catalog`): `json_custom` for the
-/// client's own rules (client pack, custom rules folder), `json_official`
-/// for a signed CodeFixture pack, `json_builtin` otherwise (plain files of
-/// the rules folder, demo-key pack).
+/// `ReportFinding::rule_source` from the rule's `"origin"` (ticket #143,
+/// set by `rules::catalog`): `json_custom` for the client's own rules
+/// (custom rules folder), `json_builtin` otherwise (the catalog pack or
+/// the `--rules` folder). The `official` origin of the signed packs is
+/// gone (ADR-0040) and maps to `json_builtin` like any unknown value.
 fn rule_source_of(rule_json: &serde_json::Value) -> &'static str {
     match rule_json.get("origin").and_then(|v| v.as_str()) {
         Some("client") => "json_custom",
-        Some("official") => "json_official",
         _ => "json_builtin",
     }
 }
@@ -1208,53 +1186,33 @@ pub fn run_scan(config: &ScanConfig) -> ScanReport {
         }
     };
     let t_rules = std::time::Instant::now();
-    // ADR-0039: the rules folder gives plain `.sca` files and rule packs,
-    // each rule file read once and only for the target languages. Packs
-    // that cannot be opened are reported with the invalid rule files; the
-    // packs for another key are kept apart (`skipped_rule_packs`).
-    let client_key = config.client_key.as_ref().map(|k| &k.key);
-    let mut rule_folders = Vec::new();
-    let mut skipped_rule_packs: Vec<(PathBuf, String)> = Vec::new();
+    // ADR-0040: one catalog (the pack, or the `--rules` pack or folder),
+    // then the custom rules folder; only the target languages' rule files
+    // are kept. A pack that cannot be opened is reported with the invalid
+    // rule files.
+    let mut rule_sources = Vec::new();
     let mut loaded_rule_jsons = Vec::new();
     let mut rule_errors: Vec<(PathBuf, String)> = Vec::new();
-    let mut load_folder = |dir: &Path, plain_origin: crate::rules::catalog::RuleOrigin| {
-        let mut folder =
-            crate::rules::catalog::load_rule_folder(dir, &rule_languages, client_key, plain_origin);
+    let mut load_source = |path: &Path, origin: crate::rules::catalog::RuleOrigin| {
+        let mut loaded = crate::rules::catalog::load_rules(path, &rule_languages, origin);
         let (rules, mut errors) =
-            crate::rules::catalog::compile_rule_folder(&folder, &rule_languages);
+            crate::rules::catalog::compile_loaded_rules(&loaded, &rule_languages);
         loaded_rule_jsons.extend(rules);
-        rule_errors.append(&mut folder.errors);
+        rule_errors.append(&mut loaded.errors);
         rule_errors.append(&mut errors);
-        skipped_rule_packs.append(&mut folder.foreign_packs);
-        rule_folders.push(folder.summary());
+        rule_sources.push(loaded.summary());
     };
-    load_folder(
-        &config.rules_dir,
+    load_source(
+        &config.rules_path,
         crate::rules::catalog::RuleOrigin::Builtin,
     );
     // Custom rules (ticket #84/spec #82): additive, same language filter,
     // labelled as the client's own rules in the report (#143). The CLI
-    // leaves `custom_rules_dir` empty with `--rules <DIR>`.
+    // leaves `custom_rules_dir` empty with `--rules <PATH>`.
     if let Some(custom_dir) = &config.custom_rules_dir
         && custom_dir.is_dir()
     {
-        load_folder(custom_dir, crate::rules::catalog::RuleOrigin::Client);
-    }
-    // Ed25519-signed update packs (ticket #85/spec #82): additive like
-    // the custom rules above, filtered on the same languages — see the
-    // doc comment of the `rule_updates_dir` field and `rule_packs.rs`.
-    if let Some(updates_dir) = &config.rule_updates_dir
-        && updates_dir.is_dir()
-    {
-        let (pack_rules, mut pack_errors) =
-            crate::rules::rule_packs::load_update_packs(updates_dir);
-        loaded_rule_jsons.extend(pack_rules.into_iter().filter(|rule| {
-            match rule.get("language").and_then(|v| v.as_str()) {
-                Some(language) => rule_languages.iter().any(|l| l == language),
-                None => true,
-            }
-        }));
-        rule_errors.append(&mut pack_errors);
+        load_source(custom_dir, crate::rules::catalog::RuleOrigin::Client);
     }
     let rules_loaded = loaded_rule_jsons.len();
     record_phase(
@@ -2263,9 +2221,8 @@ pub fn run_scan(config: &ScanConfig) -> ScanReport {
         rule_errors,
         rule_languages,
         undeclared_languages,
-        rule_folders,
+        rule_sources,
         rules_loaded,
-        skipped_rule_packs,
         rule_catalog,
         test_results,
         dependency_stats,
@@ -2524,7 +2481,7 @@ mod tests {
 
         let config = ScanConfig {
             root: root.clone(),
-            rules_dir,
+            rules_path: rules_dir,
             suppress_file: None,
             exclude_patterns: vec![],
             ..ScanConfig::default()
@@ -2553,7 +2510,7 @@ mod tests {
 
         let config = ScanConfig {
             root: root.clone(),
-            rules_dir,
+            rules_path: rules_dir,
             suppress_file: None,
             exclude_patterns: vec![],
             ..ScanConfig::default()
@@ -2587,7 +2544,7 @@ mod tests {
 
         let config = ScanConfig {
             root: root.clone(),
-            rules_dir,
+            rules_path: rules_dir,
             suppress_file: Some(suppress_path),
             exclude_patterns: vec![],
             ..ScanConfig::default()
@@ -2614,7 +2571,7 @@ mod tests {
 
         let config = ScanConfig {
             root: root.clone(),
-            rules_dir,
+            rules_path: rules_dir,
             suppress_file: None,
             exclude_patterns: vec!["vendor/".to_string()],
             ..ScanConfig::default()
@@ -2647,7 +2604,7 @@ mod tests {
 
         let config = ScanConfig {
             root: root.clone(),
-            rules_dir,
+            rules_path: rules_dir,
             only_category: Some("security".to_string()),
             ..ScanConfig::default()
         };
@@ -2667,7 +2624,7 @@ mod tests {
 
         let config = ScanConfig {
             root: root.clone(),
-            rules_dir,
+            rules_path: rules_dir,
             only_category: Some("SECURITY".to_string()),
             ..ScanConfig::default()
         };
@@ -2691,7 +2648,7 @@ mod tests {
 
         let config = ScanConfig {
             root: root.clone(),
-            rules_dir,
+            rules_path: rules_dir,
             category_overrides: [("security".to_string(), false)].into_iter().collect(),
             ..ScanConfig::default()
         };
@@ -2726,7 +2683,7 @@ mod tests {
 
         let config = ScanConfig {
             root: root.clone(),
-            rules_dir,
+            rules_path: rules_dir,
             only_category: Some("security".to_string()),
             category_overrides: [("security".to_string(), false)].into_iter().collect(),
             ..ScanConfig::default()
@@ -2751,7 +2708,7 @@ mod tests {
 
         let config = ScanConfig {
             root: root.clone(),
-            rules_dir,
+            rules_path: rules_dir,
             disabled_rules: vec!["eval_usage".to_string()],
             ..ScanConfig::default()
         };
@@ -2791,7 +2748,7 @@ mod tests {
 
         let config = ScanConfig {
             root: root.clone(),
-            rules_dir: crate::rules::catalog::builtin_rules_dir(),
+            rules_path: crate::rules::catalog::builtin_rules_dir(),
             custom_rules_dir: Some(custom_dir),
             ..ScanConfig::default()
         };
@@ -2895,7 +2852,7 @@ mod tests {
         );
         let config = ScanConfig {
             root: root.clone(),
-            rules_dir: crate::rules::catalog::builtin_rules_dir(),
+            rules_path: crate::rules::catalog::builtin_rules_dir(),
             ..ScanConfig::default()
         };
         let report = run_scan(&config);
@@ -2926,7 +2883,7 @@ mod tests {
         );
         let config = ScanConfig {
             root: root.clone(),
-            rules_dir: crate::rules::catalog::builtin_rules_dir(),
+            rules_path: crate::rules::catalog::builtin_rules_dir(),
             ..ScanConfig::default()
         };
         let report = run_scan(&config);
@@ -2945,56 +2902,20 @@ mod tests {
         std::fs::remove_dir_all(&root).ok();
     }
 
-    // === Signed update packs (ticket #85/spec #82) — the cryptographic
-    // verification itself (valid/tampered/unsigned pack) is tested in
-    // `rule_packs.rs`, with an explicit test key. Their exclusion with
-    // `--rules <DIR>` is decided by the CLI. ===
-
+    /// ADR-0040: a catalog pack gives the scan its rules for the target
+    /// languages only, the custom rules folder adds the client's own, and
+    /// the report keeps the counts the CLI prints for each source.
     #[test]
-    fn test_rule_updates_dir_with_bad_signature_loads_nothing_and_does_not_crash() {
-        let root = temp_dir();
-        let updates_dir = root.join("rules-updates");
-        write(
-            &updates_dir,
-            "cve-pack/rules/pack_rule.sca",
-            "rule pack_rule\n  language  python\n  category  security\n  severity  HIGH\n  match\n    pattern  MY_CUSTOM_MARKER\n    scope    line\n  end\nend\n",
-        );
-        write(
-            &updates_dir,
-            "cve-pack/manifest.json",
-            r#"{"pack_id": "cve-pack", "rules": [], "signature": "base64:bogus"}"#,
-        );
-        write(&root, "app.py", "MY_CUSTOM_MARKER\n");
-
-        let config = ScanConfig {
-            root: root.clone(),
-            rules_dir: crate::rules::catalog::builtin_rules_dir(),
-            rule_updates_dir: Some(updates_dir),
-            ..ScanConfig::default()
-        };
-        let report = run_scan(&config);
-        assert!(
-            report.findings.iter().all(|f| f.rule_key != "pack_rule"),
-            "a pack whose signature does not verify must never be loaded"
-        );
-        std::fs::remove_dir_all(&root).ok();
-    }
-
-    /// ADR-0039: a rules folder holding plain files and packs gives the
-    /// scan both, for the target languages only; the report keeps the
-    /// counts the CLI prints and the packs that need another key.
-    #[test]
-    fn test_rules_folder_reads_plain_files_and_packs_for_target_languages() {
+    fn test_catalog_pack_and_custom_folder_for_target_languages() {
+        use crate::rules::catalog::RuleSourceKind;
         use crate::rules::pack_format;
         let root = temp_dir();
-        let rules_dir = root.join("rules");
-        write_language_rules(&rules_dir);
         let rule = |id: &str, language: &str| {
             format!(
                 "rule {id}\n  language  {language}\n  category  security\n  severity  HIGH\n  match\n    pattern  PACKED\n    scope    line\n  end\nend\n"
             )
         };
-        let demo_files = vec![
+        let catalog = vec![
             (
                 "python/security/packed.sca".to_string(),
                 rule("py_packed", "python"),
@@ -3004,64 +2925,45 @@ mod tests {
                 rule("java_packed", "java"),
             ),
         ];
-        std::fs::write(
-            rules_dir.join("full.scapack"),
-            pack_format::write_pack("full", &demo_files, &pack_format::demo_key()),
-        )
-        .unwrap();
-        let client = crate::rules::client_key::ClientKey {
-            client: "Acme".to_string(),
-            key: [0xA1; 32],
-        };
-        let client_files = vec![(
-            "python/security/acme.sca".to_string(),
-            rule("acme", "python"),
-        )];
-        std::fs::write(
-            rules_dir.join("acme.scapack"),
-            pack_format::write_pack("acme", &client_files, &client.key),
-        )
-        .unwrap();
+        let pack = root.join(pack_format::PACK_FILE_NAME);
+        std::fs::write(&pack, pack_format::write_pack("builtin", &catalog)).unwrap();
+        let custom = root.join("custom");
+        write(&custom, "python/mine.sca", &rule("mine", "python"));
         write(&root, "src/app.py", "MARKER = PACKED\n");
-        let scan = |client_key| {
-            run_scan(&ScanConfig {
-                root: root.clone(),
-                include_paths: vec!["src".to_string()],
-                rules_dir: rules_dir.clone(),
-                client_key,
-                ..ScanConfig::default()
-            })
-        };
-        let without_key = scan(None);
-        let with_key = scan(Some(client.clone()));
+        let report = run_scan(&ScanConfig {
+            root: root.clone(),
+            include_paths: vec!["src".to_string()],
+            rules_path: pack.clone(),
+            custom_rules_dir: Some(custom.clone()),
+            ..ScanConfig::default()
+        });
         std::fs::remove_dir_all(&root).ok();
 
-        let ids = |report: &ScanReport| {
-            let mut ids: Vec<String> = report.rule_catalog.keys().cloned().collect();
-            ids.sort();
-            ids
-        };
-        assert_eq!(ids(&without_key), ["py_marker", "py_packed"]);
+        let mut ids: Vec<String> = report.rule_catalog.keys().cloned().collect();
+        ids.sort();
+        assert_eq!(ids, ["mine", "py_packed"]);
+        assert!(report.rule_errors.is_empty(), "{:?}", report.rule_errors);
+        let sources = &report.rule_sources;
+        assert_eq!(sources.len(), 2);
         assert_eq!(
-            without_key.skipped_rule_packs.len(),
-            1,
-            "acme needs its key"
+            (sources[0].kind, sources[0].path.clone()),
+            (RuleSourceKind::Pack, pack)
         );
-        assert_eq!(ids(&with_key), ["acme", "py_marker", "py_packed"]);
-        assert!(with_key.skipped_rule_packs.is_empty());
-        let folder = &with_key.rule_folders[0];
-        assert_eq!(folder.plain_files, 2);
-        assert_eq!(folder.packs.len(), 2);
-        assert_eq!(folder.files_available, 5);
-        assert_eq!(folder.files_read, 3, "the Java files are never kept");
-        assert_eq!(with_key.rules_loaded, 3);
-        assert!(
-            with_key
+        assert_eq!((sources[0].files_available, sources[0].files_read), (2, 1));
+        assert_eq!(
+            (sources[1].kind, sources[1].path.clone()),
+            (RuleSourceKind::Folder, custom)
+        );
+        assert_eq!(report.rules_loaded, 2);
+        let source_of = |id: &str| {
+            report
                 .findings
                 .iter()
-                .any(|f| f.rule_key == "acme" && f.rule_source == "json_custom"),
-            "a client pack's rules are the client's own"
-        );
+                .find(|f| f.rule_key == id)
+                .map(|f| f.rule_source.clone())
+        };
+        assert_eq!(source_of("py_packed").as_deref(), Some("json_builtin"));
+        assert_eq!(source_of("mine").as_deref(), Some("json_custom"));
     }
 
     /// Writes one Python and one Java rule in their language folders, as
@@ -3091,7 +2993,7 @@ mod tests {
         let config = ScanConfig {
             root: root.clone(),
             include_paths: vec!["src".to_string()],
-            rules_dir,
+            rules_path: rules_dir,
             ..ScanConfig::default()
         };
         let report = run_scan(&config);
@@ -3121,7 +3023,7 @@ mod tests {
         let config = ScanConfig {
             root: root.clone(),
             include_paths: vec!["src".to_string()],
-            rules_dir,
+            rules_path: rules_dir,
             target_languages: Some(vec!["python".to_string()]),
             ..ScanConfig::default()
         };
@@ -3148,7 +3050,7 @@ mod tests {
         let config = ScanConfig {
             root: root.clone(),
             include_paths: vec!["src".to_string()],
-            rules_dir,
+            rules_path: rules_dir,
             custom_rules_dir: Some(custom_dir),
             ..ScanConfig::default()
         };
@@ -3174,7 +3076,7 @@ mod tests {
 
         let config = ScanConfig {
             root: root.clone(),
-            rules_dir,
+            rules_path: rules_dir,
             severity_levels: Some(vec!["HIGH".to_string()]),
             ..ScanConfig::default()
         };
@@ -3204,7 +3106,7 @@ mod tests {
 
         let config = ScanConfig {
             root: root.clone(),
-            rules_dir,
+            rules_path: rules_dir,
             with_deps: true,
             quick_mode: true,
             ..ScanConfig::default()
@@ -3246,7 +3148,7 @@ mod tests {
         CAPTURED.lock().unwrap().clear();
         let config = ScanConfig {
             root: root.clone(),
-            rules_dir: rules_dir.clone(),
+            rules_path: rules_dir.clone(),
             on_phase_complete: Some(capture),
             ..ScanConfig::default()
         };
@@ -3304,7 +3206,8 @@ mod tests {
         std::fs::remove_dir_all(&root).ok();
     }
 
-    /// ADR-0037: a rule's `"origin"` decides the finding's `rule_source`.
+    /// A rule's `"origin"` decides the finding's `rule_source`; a former
+    /// `official` origin is no longer special (ADR-0040).
     #[test]
     fn test_rule_source_of_maps_origins() {
         let of = |origin: Option<&str>| {
@@ -3324,7 +3227,7 @@ mod tests {
             mapped,
             [
                 "json_custom",
-                "json_official",
+                "json_builtin",
                 "json_builtin",
                 "json_builtin"
             ]
@@ -3379,7 +3282,7 @@ mod tests {
         CAPTURED.lock().unwrap().clear();
         let config = ScanConfig {
             root: root.clone(),
-            rules_dir,
+            rules_path: rules_dir,
             on_phase_complete: Some(capture),
             ..ScanConfig::default()
         };
@@ -3430,7 +3333,7 @@ mod tests {
         CAPTURED.lock().unwrap().clear();
         let config = ScanConfig {
             root: root.clone(),
-            rules_dir,
+            rules_path: rules_dir,
             on_phase_complete: Some(capture),
             ..ScanConfig::default()
         };
@@ -3478,7 +3381,7 @@ mod tests {
         CAPTURED.lock().unwrap().clear();
         let config = ScanConfig {
             root: root.clone(),
-            rules_dir,
+            rules_path: rules_dir,
             on_phase_complete: Some(capture),
             script_locale: Some(crate::i18n::load_script_locale("de")),
             ..ScanConfig::default()
@@ -3516,7 +3419,7 @@ mod tests {
 
         let config = ScanConfig {
             root: root.clone(),
-            rules_dir,
+            rules_path: rules_dir,
             suppress_file: None,
             exclude_patterns: vec![],
             ..ScanConfig::default()
@@ -3543,7 +3446,7 @@ mod tests {
 
         let config = ScanConfig {
             root: root.clone(),
-            rules_dir,
+            rules_path: rules_dir,
             suppress_file: None,
             exclude_patterns: vec![],
             ..ScanConfig::default()
@@ -3583,7 +3486,7 @@ mod tests {
 
         let config = ScanConfig {
             root: root.clone(),
-            rules_dir,
+            rules_path: rules_dir,
             suppress_file: None,
             exclude_patterns: vec![],
             ..ScanConfig::default()
@@ -3618,7 +3521,7 @@ mod tests {
 
         let config = ScanConfig {
             root: root.clone(),
-            rules_dir,
+            rules_path: rules_dir,
             suppress_file: None,
             exclude_patterns: vec![],
             ..ScanConfig::default()
@@ -3649,7 +3552,7 @@ mod tests {
 
         let config = ScanConfig {
             root: root.clone(),
-            rules_dir,
+            rules_path: rules_dir,
             suppress_file: None,
             exclude_patterns: vec![],
             ..ScanConfig::default()
@@ -3695,7 +3598,7 @@ mod tests {
 
         let config = ScanConfig {
             root: root.clone(),
-            rules_dir,
+            rules_path: rules_dir,
             suppress_file: None,
             exclude_patterns: vec![],
             ..ScanConfig::default()
@@ -3748,7 +3651,7 @@ mod tests {
 
         let config = ScanConfig {
             root: root.clone(),
-            rules_dir,
+            rules_path: rules_dir,
             suppress_file: None,
             exclude_patterns: vec![],
             ..ScanConfig::default()
@@ -3787,7 +3690,7 @@ mod tests {
 
         let config = ScanConfig {
             root: root.clone(),
-            rules_dir,
+            rules_path: rules_dir,
             suppress_file: None,
             exclude_patterns: vec![],
             ..ScanConfig::default()
@@ -3829,7 +3732,7 @@ mod tests {
 
         let config = ScanConfig {
             root: root.clone(),
-            rules_dir,
+            rules_path: rules_dir,
             suppress_file: None,
             exclude_patterns: vec![],
             ..ScanConfig::default()
@@ -3867,7 +3770,7 @@ mod tests {
 
         let config = ScanConfig {
             root: root.clone(),
-            rules_dir,
+            rules_path: rules_dir,
             suppress_file: None,
             exclude_patterns: vec![],
             ..ScanConfig::default()
@@ -3902,7 +3805,7 @@ mod tests {
 
         let config = ScanConfig {
             root: root.clone(),
-            rules_dir,
+            rules_path: rules_dir,
             suppress_file: None,
             exclude_patterns: vec![],
             ..ScanConfig::default()
@@ -3947,7 +3850,7 @@ mod tests {
 
         let config = ScanConfig {
             root: root.clone(),
-            rules_dir,
+            rules_path: rules_dir,
             suppress_file: None,
             exclude_patterns: vec![],
             ..ScanConfig::default()
@@ -3991,7 +3894,7 @@ mod tests {
 
         let config = ScanConfig {
             root: root.clone(),
-            rules_dir,
+            rules_path: rules_dir,
             suppress_file: None,
             exclude_patterns: vec![],
             ..ScanConfig::default()
@@ -4030,7 +3933,7 @@ mod tests {
 
         let config = ScanConfig {
             root: root.clone(),
-            rules_dir,
+            rules_path: rules_dir,
             suppress_file: None,
             exclude_patterns: vec![],
             ..ScanConfig::default()
@@ -4075,7 +3978,7 @@ mod tests {
 
         let config = ScanConfig {
             root: root.clone(),
-            rules_dir,
+            rules_path: rules_dir,
             suppress_file: None,
             exclude_patterns: vec![],
             ..ScanConfig::default()
@@ -4126,7 +4029,7 @@ mod tests {
 
         let config = ScanConfig {
             root: root.clone(),
-            rules_dir,
+            rules_path: rules_dir,
             suppress_file: None,
             exclude_patterns: vec![],
             ..ScanConfig::default()

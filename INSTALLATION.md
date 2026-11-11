@@ -72,7 +72,7 @@ Versions before November 2026 wrote to `docs/audit-reports/`. The first scan aft
 
 ## Choosing the languages checked
 
-The demo rules are plain `.sca` files, one folder per language. `cargo build` copies them from `rules/builtin` to `target/release/rules/`, next to the engine, and every scan reads them there. A scan keeps only the rules of the project's languages, set by `languages` in the project's `audit.config.json`:
+The demo rules come compiled into one file, `rules/rules.scapack`. `cargo build` copies it to `target/release/rules.scapack`, next to the engine, and every scan reads it there. The engine and this file are all a scan needs: copy both to another folder and run the engine from anywhere. Without the pack beside it, the engine stops and names the file it looked for. A scan keeps only the rules of the project's languages, set by `languages` in the project's `audit.config.json`:
 
 ```json
 { "languages": ["python", "javascript"], "paths": { "include": ["src/"] } }
@@ -85,23 +85,19 @@ The demo rules are plain `.sca` files, one folder per language. `cargo build` co
 Each scan then prints what it loaded (`--quiet` hides these lines, not the warnings):
 
 ```text
-[sast-engine] Rules: 305/708 file(s) kept for the project's languages, in /path/to/target/release/rules
-[sast-engine]   pack acme.scapack (official, signed by CodeFixture): 708 rule file(s)
-[sast-engine] 303 rule(s) loaded for languages: java, javascript
+[sast-engine] Rules: 13/38 rule file(s) kept for the project's languages, from the pack /path/to/target/release/rules.scapack
+[sast-engine] 13 rule(s) loaded for languages: java, javascript
 ```
 
 ## Installing the full rule catalog
 
-You receive two files from CodeFixture: a rule pack, `<name>.scapack`, encrypted for you and signed, and your key file, `sast-engine.key`.
+CodeFixture sends you the full catalog as one file, `rules.scapack`.
 
-1. Copy the pack into `target/release/rules/`, next to the engine. Builds never remove it.
-2. Copy `sast-engine.key` next to the engine, in `target/release/`. You can instead pass it with `--key-file /path/to/sast-engine.key`, or put its content in the `SAST_ENGINE_KEY` environment variable.
-3. Run `sast-engine rules key`: it prints your client name and the key fingerprint, never the key.
+1. Replace `target/release/rules.scapack` with it, or keep it elsewhere and pass `--rules /path/to/rules.scapack` to each scan.
+2. Run `sast-engine rules list target/release/rules.scapack`: it prints the number of rule files the pack holds.
 
-The next scan shows the pack on its `pack` line. Without the right key, the scan says which pack needs another key and keeps the demo rules. For a rule update, replace the pack with the new one.
-
-`cargo clean` deletes `target/` with everything in it, your pack and key included. Keep a copy elsewhere, or keep them out of `target/` and point the engine at them with `--rules` and `--key-file`.
+The next scan prints the pack it read and a higher rule count. `cargo build` copies the demo pack back over `target/release/rules.scapack`, and `cargo clean` deletes `target/`: keep a copy of the full pack elsewhere.
 
 ## Writing your own rules
 
-Put your own `.sca` files in `~/.sast-engine/custom-rules/` (`%USERPROFILE%\.sast-engine\custom-rules\` on Windows), one folder per language as in `rules/builtin`. Every scan loads them in addition to the catalog, and the report labels their findings as your own rules. No build, update or `cargo clean` touches that folder. `--custom-rules-dir` points to another one.
+Put your own `.sca` files in `~/.sast-engine/custom-rules/` (`%USERPROFILE%\.sast-engine\custom-rules\` on Windows), one folder per language (`python/`, `java/`…). Every scan loads them in addition to the catalog, and the report labels their findings as your own rules. No build, update or `cargo clean` touches that folder. `--custom-rules-dir` points to another one.

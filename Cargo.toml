@@ -9,7 +9,6 @@ chacha20poly1305 = "0.10.1"
 chrono = { version = "0.4.45", default-features = false, features = ["serde", "clock", "std"] }
 clap = { version = "4.6.6", features = ["derive"] }
 crc32fast = "1.4.2"
-ed25519-dalek = { version = "3.0.0", features = ["rand_core"] }
 fancy-regex = "0.19.0"
 postgres = "0.19.10"
 rayon = "1.12.0"
@@ -34,3 +33,10 @@ tree-sitter-python = "0.25.0"
 tree-sitter-typescript = "0.23.2"
 tree-sitter-yaml = "0.7.2"
 which = "8.0.0"
+
+# `build.rs` compiles `rules/builtin` into the encrypted catalog pack
+# (ADR-0040) with the library's own `pack_format.rs`.
+[build-dependencies]
+chacha20poly1305 = "0.10.1"
+serde_json = "1.0.151"
+sha2 = "0.11.0"

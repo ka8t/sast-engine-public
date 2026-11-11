@@ -2,11 +2,11 @@
 //! reads an optional `brand.json` file and supplies the values that
 //! replace the "CodeFixture" defaults hardcoded in `main.rs`.
 //!
-//! The file sits in the same location as `custom-rules/`/`rules-updates/`, resolved the same
+//! The file sits in the same location as `custom-rules/`, resolved the same
 //! way — cf. `main.rs`. Missing
 //! file, invalid JSON, or an unexpected schema: silent fallback to
 //! the "CodeFixture" defaults (no blocking error), same philosophy as
-//! `custom_rules_dir`/`rule_updates_dir` — an optional mechanism must
+//! `custom_rules_dir`/`advisories_dir` — an optional mechanism must
 //! never break a scan that worked before its introduction. Each field
 //! is independent: a partial `brand.json` (e.g. only `tool_name`)
 //! touches ONLY that field, every other field stays at the

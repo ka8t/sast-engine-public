@@ -68,9 +68,10 @@ pub const SALT_DEMO_UNIVERSAL: &[u8] = b"sast_engine_demo_universal_v1";
 /// (ticket #65) — fixed, identical in every build of the binary.
 ///
 /// Since ADR-0037 (ticket #141) this is the **public demo key** on
-/// purpose: it opens the demo pack and the packs built from
-/// `rules/builtin` for development. The source is public, so it protects
-/// nothing; what is sold travels in packs encrypted with a per-client key.
+/// purpose, and since ADR-0040 the only key: it opens every rule pack,
+/// the demo pack of the shared repository as the full catalog built in
+/// the private one. The source is public, so it protects nothing; a real
+/// protection is a separate decision, to take before any sale.
 ///
 /// **The threshold aimed for is precise, don't overestimate it**: this
 /// secret (and `SALT_DEMO_UNIVERSAL`/`DEFAULT_INFO` below) must be
@@ -174,6 +175,34 @@ pub fn encrypt_bytes_with_aad(plaintext: &[u8], aad: &[u8], key: &[u8; 32]) -> V
         .expect("chiffrement ChaCha20-Poly1305 (n'échoue jamais en pratique)");
     let mut out = Vec::with_capacity(12 + ciphertext.len());
     out.extend_from_slice(&nonce);
+    out.extend_from_slice(&ciphertext);
+    out
+}
+
+/// [`encrypt_bytes_with_aad`] with a nonce chosen by the caller instead of
+/// a random one. Rule packs (ADR-0040) derive it from their content, so
+/// the same rules always give the same bytes. Safe only because a nonce
+/// never repeats for two different plaintexts under one key: the caller
+/// must derive it from everything it encrypts.
+pub fn encrypt_bytes_with_aad_and_nonce(
+    plaintext: &[u8],
+    aad: &[u8],
+    key: &[u8; 32],
+    nonce: &[u8; 12],
+) -> Vec<u8> {
+    use chacha20poly1305::aead::Payload;
+    let cipher = ChaCha20Poly1305::new(Key::from_slice(key));
+    let ciphertext = cipher
+        .encrypt(
+            Nonce::from_slice(nonce),
+            Payload {
+                msg: plaintext,
+                aad,
+            },
+        )
+        .expect("ChaCha20-Poly1305 encryption never fails in practice");
+    let mut out = Vec::with_capacity(12 + ciphertext.len());
+    out.extend_from_slice(nonce);
     out.extend_from_slice(&ciphertext);
     out
 }

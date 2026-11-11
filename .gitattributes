@@ -1,3 +1,3 @@
-# Byte-exact fixture: the rule file hash is signed (ticket #107), so no
-# CRLF conversion on Windows checkouts.
-tests/fixtures/python_signed_pack/** -text
+# The rule pack is binary (ADR-0040): never convert its line endings on
+# Windows checkouts, never show it as a text diff.
+*.scapack binary
