@@ -89,6 +89,16 @@ Each scan then prints what it loaded (`--quiet` hides these lines, not the warni
 [sast-engine] 13 rule(s) loaded for languages: java, javascript
 ```
 
+## Folders a scan skips
+
+Besides `node_modules/`, `vendor/`, `.venv/`, `__pycache__/`, `*.min.js` and the engine's own reports, a scan skips folders that hold no project code:
+
+- build output: a `target/` folder next to a `pom.xml` (Maven), a `build/` folder next to a `build.gradle` or `build.gradle.kts` (Gradle);
+- Python virtual environments, whatever their name: any folder holding a `pyvenv.cfg` file;
+- documentation: `docs/`, `doc/`, `documentation/` and `wiki/`, at any depth and in any case.
+
+After the scan, one line names each folder skipped this way and why (`--quiet` hides it). To scan one of them anyway, for example a documentation site with code that runs, name it in `paths.include` of `audit.config.json`: `"include": [".", "docs/"]`. To skip more folders, list them in `paths.exclude`.
+
 ## Installing the full rule catalog
 
 CodeFixture sends you the full catalog as one file, `rules.scapack`.
