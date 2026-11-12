@@ -46,15 +46,10 @@ use sast_engine::scan::orchestrator::{ScanConfig, ScanReport, run_scan};
 /// scanned tens of thousands of third-party files (numpy/transformers/
 /// pytest...) — nothing to do with engine slowness, just the total
 /// absence of these defaults on the Rust side.
-const DEFAULT_EXCLUDES: &[&str] = &[
-    "node_modules/",
-    "vendor/",
-    ".venv/",
-    "__pycache__/",
-    "*.min.js",
-    "audit-reports/",
-    "audit-datas/",
-];
+///
+/// The list lives in the library (`project_config::DEFAULT_SCAN_EXCLUDES`)
+/// so that every caller of `run_scan` skips the same folders.
+const DEFAULT_EXCLUDES: &[&str] = sast_engine::project::project_config::DEFAULT_SCAN_EXCLUDES;
 
 /// Default report directory, relative to the scanned folder (ticket
 /// #133, 2026-11-09). **Deliberate deviation from Python**, which writes
@@ -117,14 +112,11 @@ fn output_excludes(root: &Path, data_dir: Option<&Path>, output: Option<&Path>) 
 ///    still a present file (default paths, no prompt). A present but
 ///    invalid file is reported and the defaults are used, never the
 ///    prompt (ticket #137: the prompt overwrote it).
-/// 2. Absent: **proposed** interactively (automatic detection +
-///    prompt), an accepted deviation from Python (which auto-generates
-///    it silently, `sca/cli.py:1108-1111`) — confirmed with the maintainer
-///    (2026-08-26). Never blocking: only if `stdin` is a real
-///    terminal and `!quiet` (otherwise a CI/script would hang
-///    indefinitely on a prompt that will never arrive).
-/// 3. Neither a file nor an accepted prompt: the whole directory
-///    (`["."]`).
+/// 2. Absent: the whole directory (`["."]`). In a terminal the file is
+///    created first by `project::config_wizard`, called by
+///    `run_scan_command`, which then stops without scanning
+///    (2026-11-12); this branch is reached without a terminal, with
+///    `--quiet` or with JSON logs.
 ///
 /// In every case the returned exclusions start with `DEFAULT_EXCLUDES`
 /// (see its doc comment); the project's own patterns follow. The third
@@ -132,7 +124,6 @@ fn output_excludes(root: &Path, data_dir: Option<&Path>, output: Option<&Path>) 
 /// scan start (ticket #140).
 fn resolve_project_paths(
     root: &Path,
-    quiet: bool,
     script_locale: &serde_json::Value,
 ) -> (Vec<String>, Vec<String>, PathsOrigin) {
     // Prompt messages in the `--lang` language (ticket #124 — they were
@@ -173,63 +164,9 @@ fn resolve_project_paths(
         Ok(None) => {}
     }
 
-    // Never with `--log-format json` (ticket #92): an interactive
-    // question has no place in a machine-readable event stream.
-    if !quiet
-        && !JSON_LOGS.load(std::sync::atomic::Ordering::Relaxed)
-        && std::io::stdin().is_terminal()
-    {
-        let info = sast_engine::project::project_config::auto_detect_project(root);
-        eprintln!(
-            "[sast-engine] {}",
-            say("config_prompt_not_found").replace("{path}", &root.display().to_string())
-        );
-        if !info.languages.is_empty() {
-            eprintln!(
-                "[sast-engine] {}",
-                say("config_prompt_languages").replace("{languages}", &info.languages.join(", "))
-            );
-        }
-        eprintln!(
-            "[sast-engine] {}",
-            say("config_prompt_include").replace("{paths}", &info.include_paths.join(", "))
-        );
-        eprint!("[sast-engine] {} ", say("config_prompt_question"));
-        let _ = std::io::stderr().flush();
-        let mut answer = String::new();
-        // `Ok(0)` = EOF with no byte read at all (stdin closed/redirected
-        // unexpectedly despite `is_terminal()`) — treated as a refusal,
-        // not as an empty answer (plain Enter) which, in contrast,
-        // accepts the default. Distinction needed so a file is
-        // never written silently without a real human answer.
-        match std::io::stdin().read_line(&mut answer) {
-            Ok(0) => {
-                eprintln!("[sast-engine] {}", say("config_prompt_input_closed"));
-            }
-            Ok(_) if accepts_prompt(&answer, &say("config_prompt_yes_answers")) => {
-                match sast_engine::project::project_config::write_audit_config_json(root, &info) {
-                    Ok(p) => eprintln!(
-                        "[sast-engine] {}",
-                        say("config_prompt_written").replace("{path}", &p.display().to_string())
-                    ),
-                    Err(e) => eprintln!(
-                        "[sast-engine] {}",
-                        say("config_prompt_write_error").replace("{error}", &e.to_string())
-                    ),
-                }
-                return (
-                    info.include_paths,
-                    with_default_excludes(info.exclude_patterns),
-                    PathsOrigin::ConfigFile,
-                );
-            }
-            Ok(_) => {
-                eprintln!("[sast-engine] {}", say("config_prompt_declined"));
-            }
-            Err(_) => {}
-        }
-    }
-
+    // No file: the whole folder. In a terminal the scan never gets
+    // here without a file: `run_scan_command` asks for one first
+    // (`project::config_wizard`) and stops.
     (
         vec![".".to_string()],
         with_default_excludes(Vec::new()),
@@ -517,6 +454,46 @@ fn with_default_excludes(project_excludes: Vec<String>) -> Vec<String> {
     merged
 }
 
+/// The line naming the advisory database of a `--with-deps` scan
+/// (ADR-0042), and whether it is a warning: the database read with its
+/// date and advisories per ecosystem, or why the dependencies were not
+/// checked (no file, unusable file).
+fn advisory_database_line(
+    status: &sast_engine::scan::orchestrator::AdvisoryDatabaseStatus,
+    say: impl Fn(&str) -> String,
+) -> (bool, String) {
+    use sast_engine::scan::orchestrator::AdvisoryDatabaseStatus;
+    match status {
+        AdvisoryDatabaseStatus::Read {
+            path,
+            created,
+            counts,
+        } => {
+            let counts: Vec<String> = counts.iter().map(|(name, n)| format!("{name} {n}")).collect();
+            (
+                false,
+                say("scan_advisories_read")
+                    .replace("{path}", &path.display().to_string())
+                    .replace("{date}", created)
+                    .replace("{counts}", &counts.join(", ")),
+            )
+        }
+        AdvisoryDatabaseStatus::Missing { path } => (
+            true,
+            say("scan_advisories_missing").replace(
+                "{path}",
+                &path
+                    .as_ref()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| sast_engine::project::advisory_file::FILE_NAME.to_string()),
+            ),
+        ),
+        AdvisoryDatabaseStatus::Unreadable { error, .. } => {
+            (true, say("scan_advisories_unreadable").replace("{error}", error))
+        }
+    }
+}
+
 /// `ScanConfig::on_phase_complete` callback — displays progress LIVE,
 /// phase by phase, instead of a single dump after the scan fully
 /// completes (reported by the maintainer, 2026-08-26: nothing was displayed
@@ -647,23 +624,6 @@ fn emit_error(msg: &str) {
     log_line(LogLevel::Error, msg);
 }
 
-/// Interprets the answer to the `[Y/n]` prompt — an empty line (plain
-/// Enter) accepts the default, everything else must explicitly match a
-/// "yes" to create the file. `localized_yes` is the comma-separated
-/// `config_prompt_yes_answers` of the `--lang` locale (`o,oui`,
-/// `s,si,sí`, `j,ja`…, ticket #124); English `y`/`yes` is accepted in
-/// every language, as a keyboard habit. Extracted from
-/// `resolve_project_paths` so it's testable without a real TTY.
-fn accepts_prompt(raw_answer: &str, localized_yes: &str) -> bool {
-    let answer = raw_answer.trim().to_lowercase();
-    answer.is_empty()
-        || answer == "y"
-        || answer == "yes"
-        || localized_yes
-            .split(',')
-            .any(|yes| yes.trim().to_lowercase() == answer)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -684,6 +644,33 @@ mod tests {
             let formatted = format_duration(duration);
             assert_eq!(formatted, expected);
         }
+    }
+
+    /// ADR-0042: the database read is named with its date and counts;
+    /// a missing or unusable one is a warning saying the dependencies
+    /// were not checked.
+    #[test]
+    fn test_advisory_database_line_names_database_or_says_not_checked() {
+        use sast_engine::scan::orchestrator::AdvisoryDatabaseStatus;
+        let en = sast_engine::i18n::load_script_locale("en");
+        let say = |k: &str| sast_engine::i18n::t(&en, k);
+        let (warning, line) = advisory_database_line(
+            &AdvisoryDatabaseStatus::Read {
+                path: PathBuf::from("/x/advisories.sadb"),
+                created: "2026-11-11T00:00:00Z".into(),
+                counts: vec![("PyPI".into(), 12), ("npm".into(), 30)],
+            },
+            say,
+        );
+        assert!(!warning);
+        assert!(line.contains("/x/advisories.sadb") && line.contains("2026-11-11") && line.contains("PyPI 12, npm 30"), "{line}");
+        let (warning, line) = advisory_database_line(&AdvisoryDatabaseStatus::Missing { path: Some(PathBuf::from("/x/a.sadb")) }, say);
+        assert!(warning && line.contains("/x/a.sadb") && line.contains("not checked"), "{line}");
+        let (warning, line) = advisory_database_line(
+            &AdvisoryDatabaseStatus::Unreadable { path: PathBuf::from("/x/a.sadb"), error: "bad magic".into() },
+            say,
+        );
+        assert!(warning && line.contains("bad magic") && line.contains("not checked"), "{line}");
     }
 
     #[test]
@@ -812,21 +799,21 @@ mod tests {
         let config = root.join("audit.config.json");
         let defaults = with_default_excludes(Vec::new());
 
-        let absent = resolve_project_paths(&root, true, &locale);
+        let absent = resolve_project_paths(&root, &locale);
 
         std::fs::write(
             &config,
             r#"{"paths": {"include": ["src/"], "exclude": ["legacy/", "vendor/"]}}"#,
         )
         .unwrap();
-        let valid = resolve_project_paths(&root, true, &locale);
+        let valid = resolve_project_paths(&root, &locale);
 
         std::fs::write(&config, r#"{"paths": {"include": []}}"#).unwrap();
-        let empty_include = resolve_project_paths(&root, true, &locale);
+        let empty_include = resolve_project_paths(&root, &locale);
 
         let invalid_text = r#"{"paths": {"include": ["src/"],}}"#;
         std::fs::write(&config, invalid_text).unwrap();
-        let invalid = resolve_project_paths(&root, true, &locale);
+        let invalid = resolve_project_paths(&root, &locale);
         let after_invalid = std::fs::read_to_string(&config).unwrap();
         std::fs::remove_dir_all(&root).ok();
 
@@ -949,45 +936,6 @@ mod tests {
         assert!(outside_only.is_empty());
         std::fs::remove_dir_all(&root).ok();
     }
-
-    #[test]
-    fn test_accepts_prompt_empty_line_accepts_default() {
-        assert!(accepts_prompt("\n", "o,oui"));
-        assert!(accepts_prompt("", "o,oui"));
-    }
-
-    #[test]
-    fn test_accepts_prompt_yes_variants() {
-        for s in ["o\n", "O\n", "oui\n", "y\n", "yes\n", "  o  \n"] {
-            assert!(accepts_prompt(s, "o,oui"), "devrait accepter : {s:?}");
-        }
-    }
-
-    #[test]
-    fn test_accepts_prompt_no_variants_rejected() {
-        for s in ["n\n", "N\n", "non\n", "no\n", "nope\n"] {
-            assert!(!accepts_prompt(s, "o,oui"), "devrait refuser : {s:?}");
-        }
-    }
-
-    /// Ticket #124: the accepted answers follow the locale, read from
-    /// the real `script` locale files; `y`/`yes` work everywhere and a
-    /// letter from another language does not (`o` is not yes in German).
-    #[test]
-    fn test_accepts_prompt_uses_localized_yes_answers() {
-        let yes = |lang: &str| {
-            sast_engine::i18n::t(
-                &sast_engine::i18n::load_script_locale(lang),
-                "config_prompt_yes_answers",
-            )
-        };
-        assert!(accepts_prompt("oui\n", &yes("fr")));
-        assert!(accepts_prompt("Sí\n", &yes("es")));
-        assert!(accepts_prompt("ja\n", &yes("de")));
-        assert!(accepts_prompt("yes\n", &yes("de")));
-        assert!(!accepts_prompt("o\n", &yes("de")));
-        assert!(!accepts_prompt("oui\n", &yes("en")));
-    }
 }
 
 #[derive(Parser)]
@@ -1054,7 +1002,7 @@ enum Command {
         test_command: Option<String>,
         /// Detects unpinned dependencies, and dependencies whose exact
         /// version has a published vulnerability according to the offline
-        /// advisory database (see `--advisories-dir`).
+        /// advisory database (see `--advisories`).
         #[arg(long)]
         with_deps: bool,
         /// PostgreSQL host — enables the DB schema audit if present.
@@ -1090,16 +1038,16 @@ enum Command {
         /// "HIGH,CRITICAL"). Accepted values: CRITICAL/HIGH/MEDIUM/LOW/INFO.
         #[arg(long)]
         severity: Option<String>,
-        /// Offline advisory database of published vulnerabilities, read by
-        /// `--with-deps` — default: `advisories/` next
-        /// to the executable. Missing: no vulnerability matching, the rest
-        /// of `--with-deps` is unchanged. The scan itself never uses the
-        /// network.
+        /// Offline advisory database file of published vulnerabilities,
+        /// read by `--with-deps` (ADR-0042) — default: `advisories.sadb`
+        /// next to the executable. Missing: no vulnerability matching, and
+        /// the scan says so; the rest of `--with-deps` is unchanged. The
+        /// scan itself never uses the network.
         #[arg(long)]
-        advisories_dir: Option<PathBuf>,
+        advisories: Option<PathBuf>,
         /// `brand.json` runtime customization file (ticket #87/spec
         /// #83) — default: `brand.json` next to the executable
-        /// (like `advisories_dir` above).
+        /// (like `advisories` above).
         /// Absent or invalid: strictly unchanged behavior ("CodeFixture"
         /// defaults).
         #[arg(long)]
@@ -1256,7 +1204,7 @@ fn dispatch(command: Command) -> ExitCode {
             only_category,
             disable_rule,
             severity,
-            advisories_dir,
+            advisories,
             brand_file,
             sbom,
             metrics_output,
@@ -1284,7 +1232,7 @@ fn dispatch(command: Command) -> ExitCode {
             only_category,
             disable_rule,
             severity,
-            advisories_dir,
+            advisories,
             brand_file,
             sbom,
             metrics_output,
@@ -1490,7 +1438,7 @@ struct ScanArgs {
     only_category: Option<String>,
     disable_rule: Vec<String>,
     severity: Option<String>,
-    advisories_dir: Option<PathBuf>,
+    advisories: Option<PathBuf>,
     brand_file: Option<PathBuf>,
     sbom: bool,
     metrics_output: Option<PathBuf>,
@@ -1521,7 +1469,7 @@ fn run_scan_command(args: ScanArgs) -> ExitCode {
         only_category,
         disable_rule,
         severity,
-        advisories_dir,
+        advisories,
         brand_file,
         sbom,
         metrics_output,
@@ -1540,6 +1488,43 @@ fn run_scan_command(args: ScanArgs) -> ExitCode {
                 .replace("{path}", &path.display().to_string()),
         );
         return ExitCode::from(2);
+    }
+    // 2026-11-12 (request from the maintainer): in a terminal, a folder without
+    // `audit.config.json` is not scanned. The engine asks what to scan,
+    // writes the file and asks to run the command again
+    // (`project::config_wizard`). Never with `--quiet` or JSON logs
+    // (ticket #92: no question in a machine-readable stream), nor without
+    // a terminal (a script would wait forever): the whole folder is
+    // scanned then, as before. Before the history folder is created, so
+    // that nothing else is written into the project.
+    if matches!(
+        sast_engine::project::project_config::load_config_json(&path),
+        Ok(None)
+    ) && !quiet
+        && log_format != "json"
+        && std::io::stdin().is_terminal()
+    {
+        use sast_engine::project::config_wizard::{ConfigWizardOutcome, run_config_wizard};
+        let say = |key: &str| sast_engine::i18n::t(&script_locale, key);
+        let stdin = std::io::stdin();
+        let mut reader = stdin.lock();
+        let mut writer = std::io::stderr();
+        return match run_config_wizard(&mut reader, &mut writer, &path, &say) {
+            Ok(ConfigWizardOutcome::Written(_)) => ExitCode::SUCCESS,
+            Ok(ConfigWizardOutcome::Declined) => ExitCode::from(1),
+            Ok(ConfigWizardOutcome::InputClosed) => {
+                eprintln!();
+                emit_error(&format!("[sast-engine] {}", say("config_prompt_input_closed")));
+                ExitCode::from(2)
+            }
+            Err(error) => {
+                emit_error(&format!(
+                    "[sast-engine] {}",
+                    say("config_prompt_write_error").replace("{error}", &error.to_string())
+                ));
+                ExitCode::from(4)
+            }
+        };
     }
     // ADR-0040: `--rules <PATH>`, else `rules.scapack` next to the
     // executable. A missing pack or a folder without any `.sca` file would
@@ -1646,7 +1631,7 @@ fn run_scan_command(args: ScanArgs) -> ExitCode {
     ));
 
     let (include_paths, base_excludes, paths_origin) =
-        resolve_project_paths(&path, quiet, &script_locale);
+        resolve_project_paths(&path, &script_locale);
     let exclude_patterns: Vec<String> = base_excludes.into_iter().chain(exclude).collect();
 
     // Ticket #140 — the scope actually applied, once per scan.
@@ -1728,17 +1713,15 @@ fn run_scan_command(args: ScanArgs) -> ExitCode {
     // Custom rules are read by the private build only (ADR-0041): the
     // shared binary scans with the delivered pack alone.
     let custom_rules_dir: Option<PathBuf> = None;
-    // Default: next to the executable, where `sast-advisories update`
-    // writes by default when both binaries share a directory (ADR-0035).
-    // A missing directory only disables vulnerability matching.
-    let advisories_dir = advisories_dir.or_else(|| {
-        std::env::current_exe()
-            .ok()
-            .and_then(|exe| exe.parent().map(|dir| dir.join("advisories")))
-    });
+    // Default: `advisories.sadb` next to the executable, where
+    // `sast-advisories update` writes it when both binaries share a
+    // directory, and where it is placed by hand with the full pack
+    // (ADR-0042). A missing file only disables vulnerability matching, and
+    // the scan says so.
+    let advisories = advisories.or_else(sast_engine::project::advisory_file::default_path);
 
     // Default: next to the executable (ticket #87/spec #83, like
-    // `advisories_dir` above). `load_brand_file`
+    // `advisories` above). `load_brand_file`
     // returns `None` on any anomaly (missing file, unreadable,
     // invalid JSON) — safe, silent fallback to `Brand::default()`
     // (all the "CodeFixture" defaults), never a blocking error.
@@ -1819,9 +1802,11 @@ fn run_scan_command(args: ScanArgs) -> ExitCode {
             Some(print_phase_progress)
         },
         custom_rules_dir,
-        advisories_dir,
+        advisories_file: advisories,
         script_locale: Some(script_locale.clone()),
         brand_prefix: effective_prefix(&brand),
+        // Every file is discovered, so undeclared languages are named.
+        only_target_language_files: false,
     };
     emit_progress(
         quiet,
@@ -1859,6 +1844,19 @@ fn run_scan_command(args: ScanArgs) -> ExitCode {
             sast_engine::i18n::t(&script_locale, "scan_languages_undeclared")
                 .replace("{languages}", &report.undeclared_languages.join(", "))
         ));
+    }
+    // ADR-0042: every `--with-deps` scan names the advisory database it
+    // read, even with `--quiet`; without one it says the dependencies were
+    // not checked, so that no vulnerable dependency reads as "none".
+    if let Some(status) = &report.advisory_database {
+        let (warning, line) = advisory_database_line(status, |key| {
+            sast_engine::i18n::t(&script_locale, key)
+        });
+        if warning {
+            emit_warning(&format!("[sast-engine] {line}"));
+        } else {
+            emit_result(&format!("[sast-engine] {line}"));
+        }
     }
 
     if sbom {

@@ -2883,6 +2883,663 @@
       "risk": "Una consulta SQL construida con string.Format() integra valores del usuario directamente en la cadena de consulta, permitiendo inyección SQL (CWE-89).",
       "solution": "Usar SqlParameter: cmd.Parameters.AddWithValue(\"@name\", name). Para EF Core, usar ExecuteSqlInterpolated() en lugar de ExecuteSqlRaw() con string.Format.",
       "benefit": "Elimina la inyección SQL via string.Format() imponiendo consultas parametrizadas (OWASP A03, CWE-89)."
+    },
+    "smoke_csharp_language_support": {
+      "name": "Prueba de humo del pipeline C#"
+    },
+    "smoke_taint_csharp": {
+      "name": "Prueba de humo del motor de taint C#"
+    },
+    "aspnet_debug_enabled": {
+      "name": "Compilación ASP.NET en modo debug"
+    },
+    "aspnet_directory_listing": {
+      "name": "Listado de directorios ASP.NET activado"
+    },
+    "aspnet_max_request_length": {
+      "name": "Tamaño máximo de petición ASP.NET demasiado alto"
+    },
+    "assembly_path_injection": {
+      "name": "Assembly cargado desde una ruta controlada por el usuario"
+    },
+    "cleartext_storage_csharp": {
+      "name": "Datos sensibles almacenados en claro (C#)"
+    },
+    "conditional_bypass_csharp": {
+      "name": "Decisión de seguridad basada en un parámetro de la petición (C#)"
+    },
+    "cookie_broad_domain": {
+      "name": "Dominio de cookie demasiado amplio"
+    },
+    "cookie_broad_path": {
+      "name": "Ruta de cookie demasiado amplia"
+    },
+    "dont_install_root_cert": {
+      "name": "Certificado añadido al almacén raíz"
+    },
+    "ecb_mode_csharp": {
+      "name": "Modo de cifrado ECB (C#)"
+    },
+    "exposure_private_information": {
+      "name": "Información privada en las respuestas de la API"
+    },
+    "exposure_transmitted_data": {
+      "name": "Datos sensibles enviados en las respuestas HTTP"
+    },
+    "hardcoded_connection_string": {
+      "name": "Cadena de conexión fija en el código con credenciales"
+    },
+    "hardcoded_encryption_key": {
+      "name": "Clave de cifrado fija en el código"
+    },
+    "inappropriate_encoding": {
+      "name": "Codificación inadecuada para el contexto de salida"
+    },
+    "insecure_sql_connection": {
+      "name": "Conexión a SQL Server sin cifrar"
+    },
+    "insufficient_key_size_csharp": {
+      "name": "Clave RSA demasiado corta (C#)"
+    },
+    "integer_overflow_buffer_size_csharp": {
+      "name": "Desbordamiento de entero en el tamaño de un búfer (C#)"
+    },
+    "local_unvalidated_arithmetic": {
+      "name": "Aritmética de punteros sin validar en código unsafe"
+    },
+    "log_forging_csharp": {
+      "name": "Falsificación de registros (C#)"
+    },
+    "missing_authorize_attribute": {
+      "name": "Acción de controlador sin [Authorize]"
+    },
+    "missing_global_error_handler": {
+      "name": "Páginas de error personalizadas de ASP.NET desactivadas"
+    },
+    "missing_x_frame_options_csharp": {
+      "name": "Falta la cabecera X-Frame-Options (C#)"
+    },
+    "missing_xml_validation": {
+      "name": "XML analizado sin validación de esquema"
+    },
+    "persistent_cookie": {
+      "name": "Cookie persistente con caducidad larga"
+    },
+    "regex_injection_csharp": {
+      "name": "Inyección de expresiones regulares (C#)"
+    },
+    "resource_injection_csharp": {
+      "name": "Inyección de recursos (C#)"
+    },
+    "rsa_without_oaep_csharp": {
+      "name": "RSA sin relleno OAEP (C#)"
+    },
+    "runtime_checks_bypass": {
+      "name": "Campo privado escrito durante la deserialización"
+    },
+    "session_not_abandoned": {
+      "name": "Sesión no renovada tras el inicio de sesión"
+    },
+    "taint_cookie_injection": {
+      "name": "Inyección de cookies"
+    },
+    "taint_graphql_injection": {
+      "name": "Inyección GraphQL"
+    },
+    "taint_header_injection": {
+      "name": "Inyección de cabeceras HTTP"
+    },
+    "taint_nosql": {
+      "name": "Inyección NoSQL"
+    },
+    "taint_smtp_injection": {
+      "name": "Inyección SMTP"
+    },
+    "unbounded_allocation_from_input": {
+      "name": "Asignación dimensionada por una entrada del usuario"
+    },
+    "uncontrolled_format_string": {
+      "name": "Cadena de formato no controlada"
+    },
+    "unmanaged_resource_leak_on_error": {
+      "name": "Recurso no administrado perdido en caso de error"
+    },
+    "unsafe_deserialization_delegate": {
+      "name": "Deserialización con BinaryFormatter o SoapFormatter"
+    },
+    "use_after_dispose": {
+      "name": "Objeto usado después de Dispose()"
+    },
+    "xml_injection_csharp": {
+      "name": "Inyección XML (C#)"
+    },
+    "xxe_xmldocument": {
+      "name": "XXE mediante XmlDocument"
+    },
+    "zip_slip_csharp": {
+      "name": "Zip Slip (C#)"
+    },
+    "smoke_dockerfile_language_support": {
+      "name": "Prueba de humo del pipeline Dockerfile"
+    },
+    "smoke_html_language_support": {
+      "name": "Prueba de humo del pipeline HTML"
+    },
+    "arithmetic_extreme_values": {
+      "name": "Aritmética con valores enteros extremos"
+    },
+    "arithmetic_tainted": {
+      "name": "Aritmética con una entrada del usuario sin validar"
+    },
+    "arithmetic_uncontrolled": {
+      "name": "Aritmética con valores de configuración sin validar"
+    },
+    "array_construction_tainted": {
+      "name": "Array dimensionado por una entrada del usuario"
+    },
+    "array_index_validation": {
+      "name": "Índice de array sin validar procedente del usuario"
+    },
+    "auth_check_fail_open_on_exception": {
+      "name": "Comprobación de autenticación abierta ante una excepción"
+    },
+    "authz_bypass_raw_uri_check": {
+      "name": "Control de acceso sobre la URI bruta de la petición"
+    },
+    "cleartext_storage_class": {
+      "name": "Secreto almacenado en un campo String en claro"
+    },
+    "cleartext_storage_cookie": {
+      "name": "Secreto almacenado en una cookie"
+    },
+    "cleartext_storage_properties": {
+      "name": "Secreto fijo en un objeto Properties"
+    },
+    "comparison_wider_type": {
+      "name": "Comparación de bucle con un tipo más amplio"
+    },
+    "conditional_bypass_java": {
+      "name": "Decisión de seguridad basada en una entrada del usuario (Java)"
+    },
+    "dangerous_function_java": {
+      "name": "Runtime.exec() con una entrada del usuario"
+    },
+    "exec_relative_path": {
+      "name": "Comando ejecutado mediante una ruta relativa"
+    },
+    "exec_tainted_environment": {
+      "name": "Comando construido a partir del entorno"
+    },
+    "exec_unescaped": {
+      "name": "Comando construido por concatenación"
+    },
+    "groovy_injection": {
+      "name": "Inyección de scripts Groovy"
+    },
+    "http_response_splitting": {
+      "name": "División de respuesta HTTP"
+    },
+    "http_smuggling_trailer_trust": {
+      "name": "Trailers chunked aceptados como cabeceras"
+    },
+    "infinite_loop_user_input": {
+      "name": "Salida de bucle controlada por el usuario"
+    },
+    "insecure_basic_auth": {
+      "name": "Autenticación Basic sobre HTTP"
+    },
+    "insecure_bean_validation": {
+      "name": "Entrada del usuario en los mensajes de Bean Validation"
+    },
+    "insecure_javamail": {
+      "name": "JavaMail sin TLS"
+    },
+    "insecure_ldap_auth": {
+      "name": "Autenticación LDAP simple sin cifrado"
+    },
+    "insecure_maven_dependency": {
+      "name": "Repositorio Maven sobre HTTP"
+    },
+    "insufficient_key_size_java": {
+      "name": "Clave RSA o DSA demasiado corta (Java)"
+    },
+    "jexl_injection": {
+      "name": "Inyección de expresiones JEXL"
+    },
+    "lock_order_inconsistency": {
+      "name": "Orden de bloqueo incoherente"
+    },
+    "missing_jwt_signature_check": {
+      "name": "JWT analizado sin verificar la firma"
+    },
+    "missing_permission_check_java": {
+      "name": "Acción web sin control de permisos"
+    },
+    "mvel_injection": {
+      "name": "Inyección de expresiones MVEL"
+    },
+    "netty_bytebuf_leak_on_error": {
+      "name": "ByteBuf de Netty no liberado en caso de error"
+    },
+    "netty_response_splitting": {
+      "name": "División de respuesta HTTP (Netty)"
+    },
+    "numeric_cast_tainted": {
+      "name": "Conversión de reducción de una entrada del usuario"
+    },
+    "ognl_injection": {
+      "name": "Inyección de expresiones OGNL"
+    },
+    "partial_path_traversal": {
+      "name": "Recorrido de directorios parcial"
+    },
+    "polynomial_redos_java": {
+      "name": "Expresión regular expuesta a ReDoS (Java)"
+    },
+    "predictable_seed": {
+      "name": "Semilla de SecureRandom predecible"
+    },
+    "regex_injection_java": {
+      "name": "Inyección de expresiones regulares (Java)"
+    },
+    "rsa_without_oaep": {
+      "name": "RSA sin relleno OAEP"
+    },
+    "session_fixation_java": {
+      "name": "Fijación de sesión (Java)"
+    },
+    "socket_auth_race": {
+      "name": "Condición de carrera entre aceptar el socket y autenticar"
+    },
+    "static_initialization_vector": {
+      "name": "Vector de inicialización estático"
+    },
+    "taint_sensitive_attr_write": {
+      "name": "Atributo sensible fijado por el usuario"
+    },
+    "taint_trust_boundary": {
+      "name": "Violación de la frontera de confianza"
+    },
+    "tainted_permissions_check": {
+      "name": "Control de permisos construido desde el usuario"
+    },
+    "temp_dir_info_disclosure": {
+      "name": "Archivo predecible en el directorio temporal"
+    },
+    "template_injection_java": {
+      "name": "Inyección de plantillas (Java)"
+    },
+    "toctou_race_condition": {
+      "name": "Condición de carrera entre comprobación y uso de archivo (TOCTOU)"
+    },
+    "url_forward_injection": {
+      "name": "Petición reenviada a una ruta controlada por el usuario"
+    },
+    "use_ssl_socket": {
+      "name": "Socket sin cifrar para datos sensibles"
+    },
+    "world_writable_file_read": {
+      "name": "Lectura de un archivo modificable por todos"
+    },
+    "xslt_injection": {
+      "name": "Inyección XSLT"
+    },
+    "zip_slip": {
+      "name": "Zip Slip"
+    },
+    "account_enumeration_response_differential": {
+      "name": "Enumeración de cuentas mediante respuestas distintas"
+    },
+    "angularjs_insecure_url_whitelist": {
+      "name": "Lista blanca de URL de AngularJS demasiado amplia"
+    },
+    "auth_truthy_check_ignores_error": {
+      "name": "Comprobación de autenticación que ignora el error"
+    },
+    "bad_tag_filter": {
+      "name": "Etiquetas HTML filtradas con una expresión regular"
+    },
+    "broken_crypto_algorithm": {
+      "name": "Algoritmo de cifrado roto"
+    },
+    "buffer_index_without_bounds_check": {
+      "name": "Lectura de búfer sin comprobar los límites"
+    },
+    "build_artifact_leak": {
+      "name": "Source maps publicados en producción"
+    },
+    "case_sensitive_middleware_path": {
+      "name": "Ruta de middleware sensible a mayúsculas"
+    },
+    "cleartext_cookie": {
+      "name": "Cookie sensible sin el atributo Secure"
+    },
+    "cleartext_logging": {
+      "name": "Datos sensibles registrados en claro"
+    },
+    "cleartext_storage_sensitive": {
+      "name": "Datos sensibles en el almacenamiento del navegador"
+    },
+    "client_side_ssrf": {
+      "name": "Falsificación de peticiones en el cliente"
+    },
+    "conditional_bypass": {
+      "name": "Decisión de seguridad basada en una entrada del usuario"
+    },
+    "cross_tenant_resource_access": {
+      "name": "Acceso a un recurso de otro tenant"
+    },
+    "different_kinds_comparison_bypass": {
+      "name": "Control de seguridad que compara campos distintos de la petición"
+    },
+    "disable_certificate_validation": {
+      "name": "Validación de certificados TLS desactivada"
+    },
+    "dom_pseudo_eval": {
+      "name": "Cadena pasada a setTimeout o setInterval"
+    },
+    "double_escaping": {
+      "name": "Doble escape o desescape"
+    },
+    "electron_insecure_content": {
+      "name": "Electron permite contenido inseguro"
+    },
+    "electron_node_integration": {
+      "name": "nodeIntegration activado en Electron"
+    },
+    "electron_web_security_disabled": {
+      "name": "webSecurity desactivado en Electron"
+    },
+    "empty_password_config": {
+      "name": "Contraseña vacía en la configuración"
+    },
+    "file_access_to_http": {
+      "name": "Archivo local enviado en una petición HTTP"
+    },
+    "filesystem_race_condition": {
+      "name": "Condición de carrera en el sistema de archivos (TOCTOU)"
+    },
+    "functionality_untrusted_domain": {
+      "name": "Script externo sin Subresource Integrity"
+    },
+    "functionality_untrusted_source": {
+      "name": "Script u hoja de estilo cargado por HTTP"
+    },
+    "hardcoded_data_as_code": {
+      "name": "Datos codificados ejecutados como código"
+    },
+    "host_header_poisoning": {
+      "name": "Envenenamiento de la cabecera Host"
+    },
+    "http_to_file_access": {
+      "name": "Datos HTTP escritos en un archivo"
+    },
+    "ide_config_exfil": {
+      "name": "Escritura en la configuración de un IDE o asistente de IA"
+    },
+    "improper_code_sanitization": {
+      "name": "Código saneado con reemplazo de cadenas antes de eval"
+    },
+    "incomplete_hostname_regexp": {
+      "name": "Regex de nombre de host con un punto sin escapar"
+    },
+    "incomplete_html_attribute_sanitization": {
+      "name": "Saneamiento incompleto de atributos HTML"
+    },
+    "incomplete_multichar_sanitization": {
+      "name": "Saneamiento incompleto de secuencias de varios caracteres"
+    },
+    "incomplete_sanitization": {
+      "name": "replace() sin el indicador global"
+    },
+    "incomplete_url_scheme_check": {
+      "name": "Comprobación incompleta del esquema de URL"
+    },
+    "incomplete_url_substring_sanitization": {
+      "name": "URL comprobada por subcadena"
+    },
+    "incorrect_suffix_check": {
+      "name": "Comprobación de sufijo incorrecta con indexOf"
+    },
+    "indirect_command_injection": {
+      "name": "Comando de shell construido por concatenación"
+    },
+    "insecure_dependency_http": {
+      "name": "Dependencia npm por HTTP o FTP"
+    },
+    "insecure_download": {
+      "name": "Ejecutable descargado por HTTP"
+    },
+    "insecure_random_js": {
+      "name": "Math.random() para valores de seguridad"
+    },
+    "insecure_temp_file": {
+      "name": "Nombre de archivo temporal predecible"
+    },
+    "insufficient_password_hash": {
+      "name": "Hash rápido usado para contraseñas"
+    },
+    "jwt_missing_verification": {
+      "name": "Verificación de JWT desactivada"
+    },
+    "loop_bound_injection": {
+      "name": "Límite de bucle procedente del usuario"
+    },
+    "missing_auth_middleware": {
+      "name": "Ruta sensible sin middleware de autenticación"
+    },
+    "missing_regexp_anchor": {
+      "name": "Regex de validación sin anclas"
+    },
+    "missing_x_frame_options": {
+      "name": "Falta la cabecera X-Frame-Options"
+    },
+    "npm_git_dependency": {
+      "name": "Dependencia npm fijada a un commit Git de terceros"
+    },
+    "overly_large_regex_range": {
+      "name": "Rango de caracteres de regex demasiado amplio"
+    },
+    "password_in_config_file": {
+      "name": "Contraseña en un archivo de configuración"
+    },
+    "private_file_exposure": {
+      "name": "Archivos privados servidos como contenido estático"
+    },
+    "regex_injection": {
+      "name": "Inyección de expresiones regulares"
+    },
+    "remote_property_injection": {
+      "name": "Inyección remota de propiedades"
+    },
+    "resource_exhaustion": {
+      "name": "Agotamiento de recursos por una entrada del usuario"
+    },
+    "samesite_none_cookie": {
+      "name": "Cookie SameSite=None sin Secure"
+    },
+    "second_order_command_injection": {
+      "name": "Inyección de comandos de segundo orden"
+    },
+    "sensitive_get_query": {
+      "name": "Datos sensibles en los parámetros GET"
+    },
+    "server_crash_unhandled": {
+      "name": "Error de análisis no controlado que detiene el servidor"
+    },
+    "session_fixation": {
+      "name": "Fijación de sesión"
+    },
+    "shell_injection_from_env": {
+      "name": "Comando de shell construido con variables de entorno"
+    },
+    "stored_xss": {
+      "name": "XSS almacenado"
+    },
+    "taint_cmdi_js": {
+      "name": "Inyección de comandos (JavaScript)"
+    },
+    "taint_pathtraversal_js": {
+      "name": "Recorrido de directorios (JavaScript)"
+    },
+    "taint_sqli_js": {
+      "name": "Inyección SQL (JavaScript)"
+    },
+    "taint_xss_js": {
+      "name": "Cross-site scripting (JavaScript)"
+    },
+    "tainted_format_string": {
+      "name": "Cadena de formato controlada por el usuario"
+    },
+    "telemetry_full_pii_by_default": {
+      "name": "Telemetría que envía datos personales por defecto"
+    },
+    "template_object_injection": {
+      "name": "Inyección de objetos en plantillas"
+    },
+    "token_exchange_full_scope_copy": {
+      "name": "Token intercambiado que copia todo el alcance"
+    },
+    "type_confusion_parameter": {
+      "name": "Confusión de tipo de un parámetro de la petición"
+    },
+    "unbounded_while_true_loop": {
+      "name": "Bucle while(true) sin salida"
+    },
+    "unsafe_code_construction": {
+      "name": "Function construida a partir de una entrada del usuario"
+    },
+    "unsafe_dynamic_method_access": {
+      "name": "Método elegido por un nombre controlado por el usuario"
+    },
+    "unsafe_html_expansion": {
+      "name": "Expansión insegura de etiquetas HTML"
+    },
+    "unsafe_reflection_from_deserialized_input": {
+      "name": "Clase elegida a partir de una entrada deserializada"
+    },
+    "unvalidated_dynamic_method_call": {
+      "name": "Método global llamado por un nombre controlado por el usuario"
+    },
+    "url_host_parsing_via_string_split": {
+      "name": "Host de URL extraído dividiendo la cadena"
+    },
+    "useless_regexp_escape": {
+      "name": "Escape inútil en una regex"
+    },
+    "validate_before_canonicalize": {
+      "name": "Validación antes de la canonicalización"
+    },
+    "xml_bomb": {
+      "name": "Bomba XML (Billion Laughs)"
+    },
+    "xpath_injection": {
+      "name": "Inyección XPath"
+    },
+    "xss_exception_exposure": {
+      "name": "Detalles de la excepción enviados en la respuesta"
+    },
+    "xss_jquery_unsafe_plugin": {
+      "name": "jQuery .html() con una entrada del usuario"
+    },
+    "xss_through_dom": {
+      "name": "XSS basado en el DOM"
+    },
+    "xss_unsafe_html_construction": {
+      "name": "Construcción insegura de HTML"
+    },
+    "idor_missing_ownership_php": {
+      "name": "IDOR: sin control de propietario (PHP)"
+    },
+    "missing_authz_check_admin_controller": {
+      "name": "Acción de administración sin control de autorización"
+    },
+    "naive_domain_suffix_match_php": {
+      "name": "Comparación ingenua del sufijo de dominio (PHP)"
+    },
+    "oauth_account_link_without_email_verification_php": {
+      "name": "Cuenta OAuth vinculada sin verificar el correo"
+    },
+    "password_reset_missing_token_binding_php": {
+      "name": "Restablecimiento de contraseña sin vincular el token"
+    },
+    "quadratic_uniqueness_check_in_loop": {
+      "name": "Comprobación de unicidad cuadrática en un bucle"
+    },
+    "sensitive_data_in_redirect": {
+      "name": "Datos de la petición enviados en una redirección"
+    },
+    "sensitive_field_exposed_response": {
+      "name": "Campos sensibles del modelo en la respuesta"
+    },
+    "taint_cmdi_php": {
+      "name": "Inyección de comandos (PHP)"
+    },
+    "taint_open_redirect_php": {
+      "name": "Redirección abierta (PHP)"
+    },
+    "taint_pathtraversal_php": {
+      "name": "Recorrido de directorios (PHP)"
+    },
+    "taint_sqli_php": {
+      "name": "Inyección SQL (PHP)"
+    },
+    "taint_xss_php": {
+      "name": "Cross-site scripting (PHP)"
+    },
+    "unbounded_decompression": {
+      "name": "Descompresión sin límite de tamaño"
+    },
+    "py_missing_class_docstring": {
+      "name": "Clase pública sin docstring"
+    },
+    "authenticated_action_missing_authz": {
+      "name": "Acción autenticada sin control de autorización"
+    },
+    "cache_key_missing_user_scope": {
+      "name": "Clave de caché no ligada al usuario"
+    },
+    "case_sensitive_blocklist_bypass": {
+      "name": "Lista de permitidos o bloqueados sensible a mayúsculas"
+    },
+    "cookie_injection": {
+      "name": "Cookie construida a partir de una entrada del usuario"
+    },
+    "cors_wildcard_origin": {
+      "name": "CORS permite cualquier origen"
+    },
+    "host_allowlist_substring_bypass": {
+      "name": "Lista de hosts comprobada por subcadena"
+    },
+    "incomplete_url_sanitization": {
+      "name": "Validación de URL incompleta"
+    },
+    "jinja2_autoescape_false": {
+      "name": "Escape automático de Jinja2 desactivado"
+    },
+    "pam_auth_bypass": {
+      "name": "Autenticación PAM sin comprobar la cuenta"
+    },
+    "partial_ssrf": {
+      "name": "SSRF parcial"
+    },
+    "privileged_action_missing_role_check": {
+      "name": "Acción privilegiada sin control de rol"
+    },
+    "signature_check_skipped_when_secret_unset": {
+      "name": "Verificación de firma omitida sin secreto"
+    },
+    "unbounded_allocation_from_declared_dimensions": {
+      "name": "Asignación dimensionada por las dimensiones declaradas"
+    },
+    "unbounded_parse_loop": {
+      "name": "Bucle de análisis sin límite"
+    },
+    "unsafe_shell_construction": {
+      "name": "Comando de shell construido por formateo"
+    },
+    "smoke_yaml_language_support": {
+      "name": "Prueba de humo del pipeline YAML"
     }
   },
   "compliance_applicability_label": "Tasa de aplicabilidad SAST",

@@ -69,6 +69,23 @@ pub struct DetectedProjectInfo {
     pub exclude_patterns: Vec<String>,
 }
 
+/// Exclusions every scan applies, on top of the project's own
+/// `paths.exclude`: third-party code (`node_modules/`, `vendor/`,
+/// `.venv/`), caches, minified bundles and the engine's own reports. The
+/// CLI merges them in `main.rs::with_default_excludes`; the library
+/// exposes them so that every caller of `run_scan` skips the same
+/// folders. See `DEFAULT_EXCLUDES` in `main.rs` for the history of this
+/// list.
+pub const DEFAULT_SCAN_EXCLUDES: &[&str] = &[
+    "node_modules/",
+    "vendor/",
+    ".venv/",
+    "__pycache__/",
+    "*.min.js",
+    "audit-reports/",
+    "audit-datas/",
+];
+
 /// Detects the languages present and the root directories containing
 /// code, to propose a restricted `paths.include` rather than
 /// walking the whole project (mirror of `_auto_detect_project`, without
@@ -475,18 +492,11 @@ pub fn unsupported_config_sections(root: &Path) -> Vec<String> {
     found
 }
 
-/// Writes a minimal `audit.config.json` (just `project.name` +
-/// `paths.include`/`paths.exclude`) from a detection — not the
-/// full `DEFAULT_CONFIG` structure on the Python side (brand/reports/
-/// categories/rules/tests/fixtures), out of scope for what affects
-/// file discovery. A richer existing file (written by
-/// Audit itself, or by the Python interactive wizard) remains
-/// compatible: `read_paths_config` only reads `paths.*`.
-pub fn write_audit_config_json(
-    root: &Path,
-    info: &DetectedProjectInfo,
-) -> std::io::Result<PathBuf> {
-    let path = root.join("audit.config.json");
+/// The text `write_audit_config_json` writes for `root` and `info`: the
+/// project name (folder name), the languages and the paths, pretty JSON
+/// ending with a newline. Shown as is before writing by the interactive
+/// creation (`config_wizard.rs`).
+pub fn audit_config_json_text(root: &Path, info: &DetectedProjectInfo) -> String {
     let project_name = root
         .file_name()
         .and_then(|n| n.to_str())
@@ -499,8 +509,32 @@ pub fn write_audit_config_json(
             "exclude": info.exclude_patterns,
         }
     });
-    let mut text = serde_json::to_string_pretty(&json).expect("sérialisation JSON valide");
+    let mut text = serde_json::to_string_pretty(&json).expect("valid JSON serialization");
     text.push('\n');
+    text
+}
+
+/// `true` for a folder name the detection walk skips: dependencies,
+/// build output and caches (`EXCLUDED_DIRS`) and the engine's own
+/// reports (`ENGINE_OUTPUT_DIRS`). The interactive creation never offers
+/// them (`config_wizard::sub_folders`).
+pub fn is_skipped_dir_name(name: &str) -> bool {
+    EXCLUDED_DIRS.contains(&name) || ENGINE_OUTPUT_DIRS.contains(&name)
+}
+
+/// Writes a minimal `audit.config.json` (just `project.name` +
+/// `paths.include`/`paths.exclude`) from a detection — not the
+/// full `DEFAULT_CONFIG` structure on the Python side (brand/reports/
+/// categories/rules/tests/fixtures), out of scope for what affects
+/// file discovery. A richer existing file (written by
+/// Audit itself, or by the Python interactive wizard) remains
+/// compatible: `read_paths_config` only reads `paths.*`.
+pub fn write_audit_config_json(
+    root: &Path,
+    info: &DetectedProjectInfo,
+) -> std::io::Result<PathBuf> {
+    let path = root.join("audit.config.json");
+    let text = audit_config_json_text(root, info);
     // `create_new` (ticket #137): never overwrite an existing file, even
     // if a caller wrongly concluded it was absent — that is how a user's
     // configuration used to be replaced by the detected one.

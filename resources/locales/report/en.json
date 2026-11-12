@@ -2883,6 +2883,663 @@
       "risk": "A SQL query built with string.Format() embeds user-controlled values directly in the query string, allowing SQL injection via malicious format arguments (CWE-89).",
       "solution": "Use SqlParameter: cmd.Parameters.AddWithValue(\"@name\", name). For EF Core, use ExecuteSqlInterpolated() instead of ExecuteSqlRaw() with string.Format.",
       "benefit": "Eliminates SQL injection via string.Format() by enforcing parameterized query usage (OWASP A03, CWE-89)."
+    },
+    "smoke_csharp_language_support": {
+      "name": "C# pipeline smoke test"
+    },
+    "smoke_taint_csharp": {
+      "name": "C# taint engine smoke test"
+    },
+    "aspnet_debug_enabled": {
+      "name": "ASP.NET debug compilation enabled"
+    },
+    "aspnet_directory_listing": {
+      "name": "ASP.NET directory listing enabled"
+    },
+    "aspnet_max_request_length": {
+      "name": "ASP.NET request size limit too high"
+    },
+    "assembly_path_injection": {
+      "name": "Assembly loaded from a user-controlled path"
+    },
+    "cleartext_storage_csharp": {
+      "name": "Sensitive data stored in cleartext (C#)"
+    },
+    "conditional_bypass_csharp": {
+      "name": "Security decision based on a request parameter (C#)"
+    },
+    "cookie_broad_domain": {
+      "name": "Cookie domain too broad"
+    },
+    "cookie_broad_path": {
+      "name": "Cookie path too broad"
+    },
+    "dont_install_root_cert": {
+      "name": "Certificate added to the root store"
+    },
+    "ecb_mode_csharp": {
+      "name": "ECB encryption mode (C#)"
+    },
+    "exposure_private_information": {
+      "name": "Private information in API responses"
+    },
+    "exposure_transmitted_data": {
+      "name": "Sensitive data sent in HTTP responses"
+    },
+    "hardcoded_connection_string": {
+      "name": "Hardcoded connection string with credentials"
+    },
+    "hardcoded_encryption_key": {
+      "name": "Hardcoded encryption key"
+    },
+    "inappropriate_encoding": {
+      "name": "Wrong encoding for the output context"
+    },
+    "insecure_sql_connection": {
+      "name": "Unencrypted SQL Server connection"
+    },
+    "insufficient_key_size_csharp": {
+      "name": "RSA key too short (C#)"
+    },
+    "integer_overflow_buffer_size_csharp": {
+      "name": "Integer overflow in a buffer size (C#)"
+    },
+    "local_unvalidated_arithmetic": {
+      "name": "Unvalidated pointer arithmetic in unsafe code"
+    },
+    "log_forging_csharp": {
+      "name": "Log forging (C#)"
+    },
+    "missing_authorize_attribute": {
+      "name": "Controller action without [Authorize]"
+    },
+    "missing_global_error_handler": {
+      "name": "ASP.NET custom errors disabled"
+    },
+    "missing_x_frame_options_csharp": {
+      "name": "Missing X-Frame-Options header (C#)"
+    },
+    "missing_xml_validation": {
+      "name": "XML parsed without schema validation"
+    },
+    "persistent_cookie": {
+      "name": "Persistent cookie with a long expiry"
+    },
+    "regex_injection_csharp": {
+      "name": "Regex injection (C#)"
+    },
+    "resource_injection_csharp": {
+      "name": "Resource injection (C#)"
+    },
+    "rsa_without_oaep_csharp": {
+      "name": "RSA without OAEP padding (C#)"
+    },
+    "runtime_checks_bypass": {
+      "name": "Private field written during deserialization"
+    },
+    "session_not_abandoned": {
+      "name": "Session not renewed after login"
+    },
+    "taint_cookie_injection": {
+      "name": "Cookie injection"
+    },
+    "taint_graphql_injection": {
+      "name": "GraphQL injection"
+    },
+    "taint_header_injection": {
+      "name": "HTTP header injection"
+    },
+    "taint_nosql": {
+      "name": "NoSQL injection"
+    },
+    "taint_smtp_injection": {
+      "name": "SMTP injection"
+    },
+    "unbounded_allocation_from_input": {
+      "name": "Allocation sized by user input"
+    },
+    "uncontrolled_format_string": {
+      "name": "Uncontrolled format string"
+    },
+    "unmanaged_resource_leak_on_error": {
+      "name": "Unmanaged resource leaked on error"
+    },
+    "unsafe_deserialization_delegate": {
+      "name": "BinaryFormatter or SoapFormatter deserialization"
+    },
+    "use_after_dispose": {
+      "name": "Object used after Dispose()"
+    },
+    "xml_injection_csharp": {
+      "name": "XML injection (C#)"
+    },
+    "xxe_xmldocument": {
+      "name": "XXE through XmlDocument"
+    },
+    "zip_slip_csharp": {
+      "name": "Zip Slip (C#)"
+    },
+    "smoke_dockerfile_language_support": {
+      "name": "Dockerfile pipeline smoke test"
+    },
+    "smoke_html_language_support": {
+      "name": "HTML pipeline smoke test"
+    },
+    "arithmetic_extreme_values": {
+      "name": "Arithmetic on extreme integer values"
+    },
+    "arithmetic_tainted": {
+      "name": "Arithmetic on unvalidated user input"
+    },
+    "arithmetic_uncontrolled": {
+      "name": "Arithmetic on unvalidated configuration values"
+    },
+    "array_construction_tainted": {
+      "name": "Array sized by user input"
+    },
+    "array_index_validation": {
+      "name": "Unvalidated array index from user input"
+    },
+    "auth_check_fail_open_on_exception": {
+      "name": "Authentication check fails open on exception"
+    },
+    "authz_bypass_raw_uri_check": {
+      "name": "Access check on the raw request URI"
+    },
+    "cleartext_storage_class": {
+      "name": "Secret stored in a plain String field"
+    },
+    "cleartext_storage_cookie": {
+      "name": "Secret stored in a cookie"
+    },
+    "cleartext_storage_properties": {
+      "name": "Secret hardcoded in a Properties object"
+    },
+    "comparison_wider_type": {
+      "name": "Loop comparison with a wider type"
+    },
+    "conditional_bypass_java": {
+      "name": "Security decision based on user input (Java)"
+    },
+    "dangerous_function_java": {
+      "name": "Runtime.exec() with user input"
+    },
+    "exec_relative_path": {
+      "name": "Command run through a relative path"
+    },
+    "exec_tainted_environment": {
+      "name": "Command built from environment values"
+    },
+    "exec_unescaped": {
+      "name": "Command built by string concatenation"
+    },
+    "groovy_injection": {
+      "name": "Groovy script injection"
+    },
+    "http_response_splitting": {
+      "name": "HTTP response splitting"
+    },
+    "http_smuggling_trailer_trust": {
+      "name": "Chunked trailers trusted as headers"
+    },
+    "infinite_loop_user_input": {
+      "name": "Loop exit controlled by user input"
+    },
+    "insecure_basic_auth": {
+      "name": "Basic authentication over HTTP"
+    },
+    "insecure_bean_validation": {
+      "name": "User input in Bean Validation messages"
+    },
+    "insecure_javamail": {
+      "name": "JavaMail without TLS"
+    },
+    "insecure_ldap_auth": {
+      "name": "LDAP simple authentication without encryption"
+    },
+    "insecure_maven_dependency": {
+      "name": "Maven repository over HTTP"
+    },
+    "insufficient_key_size_java": {
+      "name": "RSA or DSA key too short (Java)"
+    },
+    "jexl_injection": {
+      "name": "JEXL expression injection"
+    },
+    "lock_order_inconsistency": {
+      "name": "Inconsistent lock order"
+    },
+    "missing_jwt_signature_check": {
+      "name": "JWT parsed without signature check"
+    },
+    "missing_permission_check_java": {
+      "name": "Web action without permission check"
+    },
+    "mvel_injection": {
+      "name": "MVEL expression injection"
+    },
+    "netty_bytebuf_leak_on_error": {
+      "name": "Netty ByteBuf not released on error"
+    },
+    "netty_response_splitting": {
+      "name": "HTTP response splitting (Netty)"
+    },
+    "numeric_cast_tainted": {
+      "name": "Narrowing cast of user input"
+    },
+    "ognl_injection": {
+      "name": "OGNL expression injection"
+    },
+    "partial_path_traversal": {
+      "name": "Partial path traversal"
+    },
+    "polynomial_redos_java": {
+      "name": "Regular expression open to ReDoS (Java)"
+    },
+    "predictable_seed": {
+      "name": "Predictable SecureRandom seed"
+    },
+    "regex_injection_java": {
+      "name": "Regex injection (Java)"
+    },
+    "rsa_without_oaep": {
+      "name": "RSA without OAEP padding"
+    },
+    "session_fixation_java": {
+      "name": "Session fixation (Java)"
+    },
+    "socket_auth_race": {
+      "name": "Race between socket accept and authentication"
+    },
+    "static_initialization_vector": {
+      "name": "Static initialization vector"
+    },
+    "taint_sensitive_attr_write": {
+      "name": "Sensitive attribute set from user input"
+    },
+    "taint_trust_boundary": {
+      "name": "Trust boundary violation"
+    },
+    "tainted_permissions_check": {
+      "name": "Permission check built from user input"
+    },
+    "temp_dir_info_disclosure": {
+      "name": "Predictable file in the temp directory"
+    },
+    "template_injection_java": {
+      "name": "Template injection (Java)"
+    },
+    "toctou_race_condition": {
+      "name": "File check-then-use race (TOCTOU)"
+    },
+    "url_forward_injection": {
+      "name": "Request forwarded to a user-controlled path"
+    },
+    "use_ssl_socket": {
+      "name": "Plain socket for sensitive data"
+    },
+    "world_writable_file_read": {
+      "name": "Read from a world-writable file"
+    },
+    "xslt_injection": {
+      "name": "XSLT injection"
+    },
+    "zip_slip": {
+      "name": "Zip Slip"
+    },
+    "account_enumeration_response_differential": {
+      "name": "Account enumeration through distinct responses"
+    },
+    "angularjs_insecure_url_whitelist": {
+      "name": "AngularJS URL whitelist too broad"
+    },
+    "auth_truthy_check_ignores_error": {
+      "name": "Authentication check ignores the error"
+    },
+    "bad_tag_filter": {
+      "name": "HTML tags filtered with a regex"
+    },
+    "broken_crypto_algorithm": {
+      "name": "Broken encryption algorithm"
+    },
+    "buffer_index_without_bounds_check": {
+      "name": "Buffer read without bounds check"
+    },
+    "build_artifact_leak": {
+      "name": "Source maps published in production"
+    },
+    "case_sensitive_middleware_path": {
+      "name": "Case-sensitive middleware path"
+    },
+    "cleartext_cookie": {
+      "name": "Sensitive cookie without Secure flag"
+    },
+    "cleartext_logging": {
+      "name": "Sensitive data logged in cleartext"
+    },
+    "cleartext_storage_sensitive": {
+      "name": "Sensitive data in browser storage"
+    },
+    "client_side_ssrf": {
+      "name": "Client-side request forgery"
+    },
+    "conditional_bypass": {
+      "name": "Security decision based on user input"
+    },
+    "cross_tenant_resource_access": {
+      "name": "Resource accessed across tenants"
+    },
+    "different_kinds_comparison_bypass": {
+      "name": "Security check comparing different request fields"
+    },
+    "disable_certificate_validation": {
+      "name": "TLS certificate validation disabled"
+    },
+    "dom_pseudo_eval": {
+      "name": "String passed to setTimeout or setInterval"
+    },
+    "double_escaping": {
+      "name": "Double escaping or unescaping"
+    },
+    "electron_insecure_content": {
+      "name": "Electron allows insecure content"
+    },
+    "electron_node_integration": {
+      "name": "Electron nodeIntegration enabled"
+    },
+    "electron_web_security_disabled": {
+      "name": "Electron webSecurity disabled"
+    },
+    "empty_password_config": {
+      "name": "Empty password in configuration"
+    },
+    "file_access_to_http": {
+      "name": "Local file sent in an HTTP request"
+    },
+    "filesystem_race_condition": {
+      "name": "File system race condition (TOCTOU)"
+    },
+    "functionality_untrusted_domain": {
+      "name": "External script without Subresource Integrity"
+    },
+    "functionality_untrusted_source": {
+      "name": "Script or stylesheet loaded over HTTP"
+    },
+    "hardcoded_data_as_code": {
+      "name": "Encoded data executed as code"
+    },
+    "host_header_poisoning": {
+      "name": "Host header poisoning"
+    },
+    "http_to_file_access": {
+      "name": "HTTP data written to a file"
+    },
+    "ide_config_exfil": {
+      "name": "Write to IDE or AI assistant configuration"
+    },
+    "improper_code_sanitization": {
+      "name": "Code sanitized by string replace before eval"
+    },
+    "incomplete_hostname_regexp": {
+      "name": "Hostname regex with an unescaped dot"
+    },
+    "incomplete_html_attribute_sanitization": {
+      "name": "Incomplete HTML attribute sanitization"
+    },
+    "incomplete_multichar_sanitization": {
+      "name": "Incomplete multi-character sanitization"
+    },
+    "incomplete_sanitization": {
+      "name": "replace() without the global flag"
+    },
+    "incomplete_url_scheme_check": {
+      "name": "Incomplete URL scheme check"
+    },
+    "incomplete_url_substring_sanitization": {
+      "name": "URL checked by substring"
+    },
+    "incorrect_suffix_check": {
+      "name": "Incorrect suffix check with indexOf"
+    },
+    "indirect_command_injection": {
+      "name": "Shell command built by concatenation"
+    },
+    "insecure_dependency_http": {
+      "name": "npm dependency over HTTP or FTP"
+    },
+    "insecure_download": {
+      "name": "Executable downloaded over HTTP"
+    },
+    "insecure_random_js": {
+      "name": "Math.random() for security values"
+    },
+    "insecure_temp_file": {
+      "name": "Predictable temporary file name"
+    },
+    "insufficient_password_hash": {
+      "name": "Fast hash used for passwords"
+    },
+    "jwt_missing_verification": {
+      "name": "JWT verification disabled"
+    },
+    "loop_bound_injection": {
+      "name": "Loop bound from user input"
+    },
+    "missing_auth_middleware": {
+      "name": "Sensitive route without authentication middleware"
+    },
+    "missing_regexp_anchor": {
+      "name": "Validation regex without anchors"
+    },
+    "missing_x_frame_options": {
+      "name": "Missing X-Frame-Options header"
+    },
+    "npm_git_dependency": {
+      "name": "npm dependency pinned to a third-party Git commit"
+    },
+    "overly_large_regex_range": {
+      "name": "Overly large regex character range"
+    },
+    "password_in_config_file": {
+      "name": "Password in a configuration file"
+    },
+    "private_file_exposure": {
+      "name": "Private files served as static content"
+    },
+    "regex_injection": {
+      "name": "Regex injection"
+    },
+    "remote_property_injection": {
+      "name": "Remote property injection"
+    },
+    "resource_exhaustion": {
+      "name": "Resource exhaustion from user input"
+    },
+    "samesite_none_cookie": {
+      "name": "SameSite=None cookie without Secure"
+    },
+    "second_order_command_injection": {
+      "name": "Second-order command injection"
+    },
+    "sensitive_get_query": {
+      "name": "Sensitive data in GET parameters"
+    },
+    "server_crash_unhandled": {
+      "name": "Unhandled parsing error crashes the server"
+    },
+    "session_fixation": {
+      "name": "Session fixation"
+    },
+    "shell_injection_from_env": {
+      "name": "Shell command built from environment variables"
+    },
+    "stored_xss": {
+      "name": "Stored XSS"
+    },
+    "taint_cmdi_js": {
+      "name": "Command injection (JavaScript)"
+    },
+    "taint_pathtraversal_js": {
+      "name": "Path traversal (JavaScript)"
+    },
+    "taint_sqli_js": {
+      "name": "SQL injection (JavaScript)"
+    },
+    "taint_xss_js": {
+      "name": "Cross-site scripting (JavaScript)"
+    },
+    "tainted_format_string": {
+      "name": "User-controlled format string"
+    },
+    "telemetry_full_pii_by_default": {
+      "name": "Telemetry sends personal data by default"
+    },
+    "template_object_injection": {
+      "name": "Template object injection"
+    },
+    "token_exchange_full_scope_copy": {
+      "name": "Exchanged token copies the full scope"
+    },
+    "type_confusion_parameter": {
+      "name": "Request parameter type confusion"
+    },
+    "unbounded_while_true_loop": {
+      "name": "while(true) loop without exit"
+    },
+    "unsafe_code_construction": {
+      "name": "Function built from user input"
+    },
+    "unsafe_dynamic_method_access": {
+      "name": "Method looked up by a user-controlled name"
+    },
+    "unsafe_html_expansion": {
+      "name": "Unsafe HTML tag expansion"
+    },
+    "unsafe_reflection_from_deserialized_input": {
+      "name": "Class chosen from deserialized input"
+    },
+    "unvalidated_dynamic_method_call": {
+      "name": "Global method called by a user-controlled name"
+    },
+    "url_host_parsing_via_string_split": {
+      "name": "URL host extracted by string split"
+    },
+    "useless_regexp_escape": {
+      "name": "Useless escape in a regex"
+    },
+    "validate_before_canonicalize": {
+      "name": "Validation before canonicalization"
+    },
+    "xml_bomb": {
+      "name": "XML bomb (Billion Laughs)"
+    },
+    "xpath_injection": {
+      "name": "XPath injection"
+    },
+    "xss_exception_exposure": {
+      "name": "Exception details sent in the response"
+    },
+    "xss_jquery_unsafe_plugin": {
+      "name": "jQuery .html() with user input"
+    },
+    "xss_through_dom": {
+      "name": "DOM-based XSS"
+    },
+    "xss_unsafe_html_construction": {
+      "name": "Unsafe HTML construction"
+    },
+    "idor_missing_ownership_php": {
+      "name": "IDOR: no ownership check (PHP)"
+    },
+    "missing_authz_check_admin_controller": {
+      "name": "Admin action without authorization check"
+    },
+    "naive_domain_suffix_match_php": {
+      "name": "Naive domain suffix match (PHP)"
+    },
+    "oauth_account_link_without_email_verification_php": {
+      "name": "OAuth account linked without email verification"
+    },
+    "password_reset_missing_token_binding_php": {
+      "name": "Password reset without token binding"
+    },
+    "quadratic_uniqueness_check_in_loop": {
+      "name": "Quadratic uniqueness check in a loop"
+    },
+    "sensitive_data_in_redirect": {
+      "name": "Request data sent in a redirect"
+    },
+    "sensitive_field_exposed_response": {
+      "name": "Sensitive model fields in the response"
+    },
+    "taint_cmdi_php": {
+      "name": "Command injection (PHP)"
+    },
+    "taint_open_redirect_php": {
+      "name": "Open redirect (PHP)"
+    },
+    "taint_pathtraversal_php": {
+      "name": "Path traversal (PHP)"
+    },
+    "taint_sqli_php": {
+      "name": "SQL injection (PHP)"
+    },
+    "taint_xss_php": {
+      "name": "Cross-site scripting (PHP)"
+    },
+    "unbounded_decompression": {
+      "name": "Decompression without size limit"
+    },
+    "py_missing_class_docstring": {
+      "name": "Public class without docstring"
+    },
+    "authenticated_action_missing_authz": {
+      "name": "Authenticated action without authorization check"
+    },
+    "cache_key_missing_user_scope": {
+      "name": "Cache key not scoped to the user"
+    },
+    "case_sensitive_blocklist_bypass": {
+      "name": "Case-sensitive allow or block list"
+    },
+    "cookie_injection": {
+      "name": "Cookie built from user input"
+    },
+    "cors_wildcard_origin": {
+      "name": "CORS allows any origin"
+    },
+    "host_allowlist_substring_bypass": {
+      "name": "Host list checked by substring"
+    },
+    "incomplete_url_sanitization": {
+      "name": "Incomplete URL validation"
+    },
+    "jinja2_autoescape_false": {
+      "name": "Jinja2 autoescape disabled"
+    },
+    "pam_auth_bypass": {
+      "name": "PAM authentication without account check"
+    },
+    "partial_ssrf": {
+      "name": "Partial SSRF"
+    },
+    "privileged_action_missing_role_check": {
+      "name": "Privileged action without role check"
+    },
+    "signature_check_skipped_when_secret_unset": {
+      "name": "Signature check skipped without a secret"
+    },
+    "unbounded_allocation_from_declared_dimensions": {
+      "name": "Allocation sized by declared dimensions"
+    },
+    "unbounded_parse_loop": {
+      "name": "Parsing loop without bound"
+    },
+    "unsafe_shell_construction": {
+      "name": "Shell command built by formatting"
+    },
+    "smoke_yaml_language_support": {
+      "name": "YAML pipeline smoke test"
     }
   },
   "compliance_applicability_label": "SAST applicability rate",

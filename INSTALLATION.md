@@ -70,6 +70,10 @@ Every scan writes into the scanned folder, under `audit-reports/`. The terminal 
 
 Versions before November 2026 wrote to `docs/audit-reports/`. The first scan after the upgrade still compares with the last export found there, then writes only to `audit-reports/`. You can delete the old folder afterwards.
 
+## Checking dependencies against published vulnerabilities
+
+`--with-deps` also compares the project's pinned dependencies with published vulnerabilities (CVE, GHSA). The database is one file, `advisories.sadb`, delivered by hand with the full rule pack: place it next to the engine, beside `rules.scapack`, or pass `--advisories <FILE>`. The scan reads it offline and names it, with its date and counts. Without it, the scan says the dependencies were not checked; it never reports them as free of vulnerabilities. Ask for a newer file from time to time: published vulnerabilities keep coming.
+
 ## Choosing the languages checked
 
 The demo rules come compiled into one file, `rules/rules.scapack`. `cargo build` copies it to `target/release/rules.scapack`, next to the engine, and every scan reads it there. The engine and this file are all a scan needs: copy both to another folder and run the engine from anywhere. Without the pack beside it, the engine stops and names the file it looked for. A scan keeps only the rules of the project's languages, set by `languages` in the project's `audit.config.json`:
@@ -80,7 +84,7 @@ The demo rules come compiled into one file, `rules/rules.scapack`. `cargo build`
 
 - Accepted values: `python`, `java`, `javascript`, `typescript` (same rules as `javascript`), `php`, `csharp`, `html`, `yaml`, `dockerfile`. The Dockerfile rules are always added.
 - Without `languages`, the scan reads the rules of the languages of the files it finds.
-- On the first run in a terminal, the engine offers to create `audit.config.json` with the languages it detects. If you later add code in another language, add it to `languages`: until then, its files are checked by no rule, and every scan says so in a warning.
+- On the first run in a terminal, the engine creates `audit.config.json` with you before any scan: whole folder or some sub-folders, folders to exclude, then the file is shown with the languages it detects and written once you confirm. Run the same command again to scan. If you later add code in another language, add it to `languages`: until then, its files are checked by no rule, and every scan says so in a warning.
 
 Each scan then prints what it loaded (`--quiet` hides these lines, not the warnings):
 

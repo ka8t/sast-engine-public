@@ -2,8 +2,9 @@
 //! advisory database written by `tools/sast-advisories` (ADR-0035).
 //!
 //! **No network here.** `tools/sast-advisories` downloads published
-//! vulnerabilities (OSV) on its own schedule; this module only reads its
-//! files (`<dir>/<Ecosystem>.json`, format in
+//! vulnerabilities (OSV) on its own schedule; this module only reads the
+//! database file it writes (`advisories.sadb`, container in
+//! `advisory_file.rs`, per-ecosystem payload in
 //! `tools/sast-advisories/src/format.rs`). This keeps the 2026-08-25
 //! decision that the engine never queries a public database while it
 //! scans: what changed is that the database now comes to the engine.
@@ -20,7 +21,6 @@
 
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
 use std::sync::Arc;
 
 use serde::Deserialize;
@@ -116,39 +116,42 @@ pub struct VulnerableDependency {
     pub fixed_version: Option<String>,
 }
 
-/// Loads the files of `ecosystems` found in `dir`. A missing file is
-/// skipped (that ecosystem was never updated); an unreadable file or an
-/// unknown format is returned as an error message per file, and the
-/// other files are still loaded.
-pub fn load(dir: &Path, ecosystems: &BTreeSet<String>) -> (AdvisoryDb, Vec<String>) {
+/// Loads the `ecosystems` held by the database `file`
+/// (`advisory_file.rs`). An ecosystem the file does not hold is skipped
+/// (never updated); one that cannot be decompressed or parsed, or whose
+/// payload format is unknown, is returned as an error message, and the
+/// others are still loaded.
+pub fn load(
+    file: &crate::project::advisory_file::DatabaseFile,
+    ecosystems: &BTreeSet<String>,
+) -> (AdvisoryDb, Vec<String>) {
     let mut db = AdvisoryDb::default();
     let mut errors = Vec::new();
     for ecosystem in ecosystems {
-        let path = dir.join(format!("{ecosystem}.json"));
-        let content = match std::fs::read(&path) {
-            Ok(c) => c,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(e) => {
-                errors.push(format!("{}: {e}", path.display()));
+        let content = match file.ecosystem_json(ecosystem) {
+            None => continue,
+            Some(Ok(c)) => c,
+            Some(Err(e)) => {
+                errors.push(e);
                 continue;
             }
         };
-        let file: EcosystemFile = match serde_json::from_slice(&content) {
+        let label = format!("{} ({ecosystem})", file.path.display());
+        let parsed: EcosystemFile = match serde_json::from_slice(&content) {
             Ok(f) => f,
             Err(e) => {
-                errors.push(format!("{}: {e}", path.display()));
+                errors.push(format!("{label}: {e}"));
                 continue;
             }
         };
-        if file.format != FORMAT_VERSION {
+        if parsed.format != FORMAT_VERSION {
             errors.push(format!(
-                "{}: format {} not supported by this engine (expected {FORMAT_VERSION})",
-                path.display(),
-                file.format
+                "{label}: format {} not supported by this engine (expected {FORMAT_VERSION})",
+                parsed.format
             ));
             continue;
         }
-        for advisory in file.advisories {
+        for advisory in parsed.advisories {
             let advisory = Arc::new(advisory);
             let names: BTreeSet<String> = advisory
                 .packages
@@ -481,6 +484,7 @@ fn compare_segment(a: &Segment, b: &Segment) -> Ordering {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
     use std::path::PathBuf;
 
     fn dep(ecosystem: &str, name: &str, version: Option<&str>, raw_line: &str) -> Dependency {
@@ -494,15 +498,25 @@ mod tests {
         }
     }
 
+    /// A database holding `json` as the payload of `ecosystem`, built
+    /// in memory with the real container (`advisory_file.rs`).
+    fn db_file(payloads: &[(&str, &str)]) -> crate::project::advisory_file::DatabaseFile {
+        use crate::project::advisory_file::{EcosystemPayload, decode, encode};
+        let payloads: Vec<EcosystemPayload> = payloads
+            .iter()
+            .map(|(name, json)| EcosystemPayload {
+                name: name.to_string(),
+                advisories: 0,
+                last_modified: "2026-01-01T00:00:00Z".to_string(),
+                json: json.as_bytes().to_vec(),
+            })
+            .collect();
+        decode(Path::new("test.sadb"), encode("test", &payloads).unwrap()).unwrap()
+    }
+
     fn db_from(ecosystem: &str, json: &str) -> AdvisoryDb {
-        let dir = std::env::temp_dir().join(format!(
-            "auditrust-advisories-{}-{}",
-            std::process::id(),
-            ecosystem
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join(format!("{ecosystem}.json")), json).unwrap();
-        let (db, errors) = load(&dir, &BTreeSet::from([ecosystem.to_string()]));
+        let file = db_file(&[(ecosystem, json)]);
+        let (db, errors) = load(&file, &BTreeSet::from([ecosystem.to_string()]));
         assert!(errors.is_empty(), "{errors:?}");
         db
     }
@@ -667,14 +681,10 @@ mod tests {
 
     #[test]
     fn test_load_reports_unknown_format_and_skips_missing_files() {
-        let dir = std::env::temp_dir().join(format!(
-            "auditrust-advisories-format-{}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("Maven.json"), r#"{"format":99,"advisories":[]}"#).unwrap();
+        // Maven in an unknown payload format; NuGet absent from the file.
+        let file = db_file(&[("Maven", r#"{"format":99,"advisories":[]}"#)]);
         let wanted = BTreeSet::from(["Maven".to_string(), "NuGet".to_string()]);
-        let (db, errors) = load(&dir, &wanted);
+        let (db, errors) = load(&file, &wanted);
         assert_eq!(errors.len(), 1);
         assert!(errors[0].contains("format 99"));
         assert!(db.loaded_ecosystems.is_empty());

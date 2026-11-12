@@ -63,19 +63,24 @@ static NEGATION_BANG_RE: LazyLock<Regex> =
 
 /// Reassignment to a literal inside a guard
 /// `if (!check(x)) x = "literal";` (same physical line as the if).
+/// The PHP `$` is part of the captured name: the PHP engine keeps it in
+/// its variable names (`$next`). The Audit's pattern allowed `\$?` before
+/// the group; the first port had lost it, so a PHP guard
+/// `if (!filter_var($next, ...)) { $next = '/'; }` left `$next` tainted
+/// (ticket #157).
 static GUARD_REASSIGN_SAMELINE_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-        r#"\)\s*\{?\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:["'][^"']*["']|[+-]?[0-9]+|null|None|undefined|true|false)"#,
+        r#"\)\s*\{?\s*(\$?[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:["'][^"']*["']|[+-]?[0-9]+|null|None|undefined|true|false)"#,
     )
     .expect("regex statique valide")
 });
 
 /// Same idiom, but as a whole following line (multi-line guard body).
 /// Anchored at the start of the line (standalone statement, not a
-/// continuation of `)`).
+/// continuation of `)`). Same `$` as `GUARD_REASSIGN_SAMELINE_RE`.
 static GUARD_REASSIGN_NEXTLINE_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-        r#"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:["'][^"']*["']|[+-]?[0-9]+|null|None|undefined|true|false)\s*;"#,
+        r#"^\s*(\$?[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:["'][^"']*["']|[+-]?[0-9]+|null|None|undefined|true|false)\s*;"#,
     )
     .expect("regex statique valide")
 });
@@ -2185,6 +2190,31 @@ mod tests {
         let mut findings = Vec::new();
         let new_state = aux_match_line(&stmt, &state, &specs, &mut findings, &source_lines);
         assert!(!state_get(&new_state, "bar").is_tainted());
+    }
+
+    /// Ticket #157: a PHP guard that reassigns the variable to a literal
+    /// on the next line clears it; the name keeps its `$`.
+    #[test]
+    fn test_aux_match_line_php_guard_reassign_clears_dollar_variable() {
+        let mut specs = specs_with(vec![], vec![]);
+        specs.sanitizers.push(
+            SanitizerSpec::new("filter_var")
+                .with_raw_regex(Regex::new(r"filter_var.*FILTER_VALIDATE_URL").unwrap()),
+        );
+        let source_lines = vec![
+            "if (!filter_var($next, FILTER_VALIDATE_URL)) {".to_string(),
+            "    $next = '/';".to_string(),
+            "}".to_string(),
+        ];
+        let mut state = empty_state();
+        state = state_set(&state, "$next", tainted("http", 1));
+        let stmt = IrStmt::Branch {
+            condition: Rhs::Const(ConstValue::Bool(true)),
+            lineno: 1,
+        };
+        let mut findings = Vec::new();
+        let new_state = aux_match_line(&stmt, &state, &specs, &mut findings, &source_lines);
+        assert!(!state_get(&new_state, "$next").is_tainted());
     }
 
     #[test]

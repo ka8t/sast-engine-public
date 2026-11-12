@@ -3,6 +3,8 @@
 //! schema and its own test suite.
 
 pub mod advisories;
+pub mod advisory_file;
+pub mod config_wizard;
 pub mod database;
 pub mod dependencies;
 pub mod project_config;

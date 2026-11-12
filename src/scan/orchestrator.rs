@@ -282,14 +282,15 @@ pub struct ScanConfig {
     /// Explicit test command; if absent and `with_tests`, tries
     /// auto-detection (`testing::auto_detect_test_command`).
     pub test_command: Option<String>,
-    /// Detects unpinned dependencies and, when `advisories_dir` holds a
+    /// Detects unpinned dependencies and, when `advisories_file` is a
     /// database, dependencies with a published vulnerability (opt-in,
     /// offline — cf. `dependencies.rs`, `advisories.rs`).
     pub with_deps: bool,
-    /// Offline advisory database written by `tools/sast-advisories`
-    /// (ADR-0035), read during the dependencies phase. `None` or a
-    /// missing directory: no vulnerability matching.
-    pub advisories_dir: Option<PathBuf>,
+    /// Offline advisory database `advisories.sadb` written by
+    /// `tools/sast-advisories` (ADR-0042), read during the dependencies
+    /// phase. `None` or a missing file: no vulnerability matching, and
+    /// `ScanReport::advisory_database` says so.
+    pub advisories_file: Option<PathBuf>,
     /// PostgreSQL schema audit (opt-in — network connection to the
     /// audited project's database, cf. `database::live`).
     pub database: Option<crate::project::database::live::DbConfig>,
@@ -393,6 +394,15 @@ pub struct ScanConfig {
     /// would have required making it also carry this label-building
     /// logic, duplicating part of `run_scan`.
     pub script_locale: Option<serde_json::Value>,
+    /// Reads only the files of `target_languages` (2026-11-12). `false`
+    /// (default, the CLI scan): every source file is discovered, so that
+    /// files of an undeclared language are named in a warning
+    /// (`ScanReport::undeclared_languages`). `true`: the files of other
+    /// languages are not even opened, for a caller that runs the rules
+    /// of one language on large folders (a folder synced by a cloud
+    /// service downloads each file it opens). No effect without
+    /// `target_languages`.
+    pub only_target_language_files: bool,
 }
 
 impl Default for ScanConfig {
@@ -408,7 +418,7 @@ impl Default for ScanConfig {
             with_tests: false,
             test_command: None,
             with_deps: false,
-            advisories_dir: None,
+            advisories_file: None,
             database: None,
             datas_dir: None,
             legacy_datas_dir: None,
@@ -422,6 +432,7 @@ impl Default for ScanConfig {
             lang: "en".to_string(),
             on_phase_complete: None,
             script_locale: None,
+            only_target_language_files: false,
         }
     }
 }
@@ -492,6 +503,10 @@ pub struct ScanReport {
     pub test_results: Option<crate::project::testing::TestResults>,
     /// Dependency statistics, if `with_deps` was active.
     pub dependency_stats: Option<DependencyStats>,
+    /// The advisory database the dependencies were checked against, or
+    /// why they were not (ADR-0042: never "none vulnerable" when nothing
+    /// was checked). `None` without `with_deps`.
+    pub advisory_database: Option<AdvisoryDatabaseStatus>,
     /// Extracted schema, if `database` was configured and the connection succeeded.
     pub database_schema: Option<crate::project::database::schema::DatabaseSchema>,
     /// Schema statistics (compared against the baseline if available).
@@ -527,21 +542,38 @@ pub struct DependencyStats {
     pub vulnerable: usize,
 }
 
+/// What the dependencies phase found as advisory database (ADR-0042).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AdvisoryDatabaseStatus {
+    /// Read: its path, creation date (newest OSV data) and advisories
+    /// per ecosystem, in file order.
+    Read {
+        path: PathBuf,
+        created: String,
+        counts: Vec<(String, usize)>,
+    },
+    /// No file at this path (or no path at all): dependencies were not
+    /// checked against published vulnerabilities.
+    Missing { path: Option<PathBuf> },
+    /// A file that could not be used, with why.
+    Unreadable { path: PathBuf, error: String },
+}
+
 /// `vulnerable_dependency` findings for the dependencies of `deps` hit
-/// by the offline advisory database in `dir` (ADR-0035) — one finding
+/// by the offline advisory database `file` (ADR-0035, ADR-0042) — one finding
 /// per dependency, listing every distinct vulnerability, so a package
 /// with ten CVEs does not bury the report under ten lines. The severity
 /// is the highest among them. Unreadable database files are reported on
 /// stderr and skipped: the rest of the scan does not depend on them.
 fn vulnerable_dependency_findings(
-    dir: &Path,
+    file: &crate::project::advisory_file::DatabaseFile,
     deps: &[crate::project::dependencies::Dependency],
 ) -> Vec<ReportFinding> {
     use crate::project::advisories;
 
     let ecosystems: std::collections::BTreeSet<String> =
         deps.iter().map(|d| d.ecosystem.clone()).collect();
-    let (db, errors) = advisories::load(dir, &ecosystems);
+    let (db, errors) = advisories::load(file, &ecosystems);
     for error in errors {
         eprintln!("[sast-engine] advisory database skipped: {error}");
     }
@@ -1043,6 +1075,16 @@ fn phase_a_language_summary(files: impl IntoIterator<Item = (&'static str, Strin
         .join(", ")
 }
 
+/// `true` when the scan discovers the files of the rule language
+/// `tag`: always, unless `only_target_language_files` limits discovery to
+/// `target_languages`.
+fn reads_language_files(config: &ScanConfig, tag: &str) -> bool {
+    match (&config.target_languages, config.only_target_language_files) {
+        (Some(languages), true) => languages.iter().any(|l| l == tag),
+        _ => true,
+    }
+}
+
 /// Runs a full scan on `config.root`.
 ///
 /// Three phases:
@@ -1080,6 +1122,7 @@ pub fn run_scan(config: &ScanConfig) -> ScanReport {
         // from Python's `runner.py` lists (no `.vue`/`.svelte`/`.tsx`/`.inc`…).
         extensions: SourceLanguage::EXTENSIONS
             .iter()
+            .filter(|(_, lang)| reads_language_files(config, lang.rule_tag()))
             .map(|(e, _)| format!(".{e}"))
             .collect(),
         // `Dockerfile` has no standard extension — recognized by exact
@@ -1089,6 +1132,7 @@ pub fn run_scan(config: &ScanConfig) -> ScanReport {
         // DOCKERFILE_FILENAMES`, the sole authoritative list.
         filenames: SourceLanguage::DOCKERFILE_FILENAMES
             .iter()
+            .filter(|_| reads_language_files(config, SourceLanguage::Dockerfile.rule_tag()))
             .map(|s| s.to_string())
             .collect(),
         exclude_patterns: config.exclude_patterns.clone(),
@@ -2045,6 +2089,7 @@ pub fn run_scan(config: &ScanConfig) -> ScanReport {
     // phases below to be disabled, even if otherwise requested
     // (mirrors `runner.py::_compute_phase_total`/`run`).
     let mut dependency_stats = None;
+    let mut advisory_database = None;
     if deps_phase_active {
         let t_deps = std::time::Instant::now();
         // Root + every `paths.include` entry, like Python — see
@@ -2075,12 +2120,38 @@ pub fn run_scan(config: &ScanConfig) -> ScanReport {
                 rule_source: "json_builtin".to_string(),
             });
         }
-        let vulnerable = config
-            .advisories_dir
-            .as_deref()
-            .filter(|dir| dir.is_dir())
-            .map(|dir| vulnerable_dependency_findings(dir, &all_deps))
-            .unwrap_or_default();
+        let (vulnerable, status) = match config.advisories_file.as_deref() {
+            None => (Vec::new(), AdvisoryDatabaseStatus::Missing { path: None }),
+            Some(path) => match crate::project::advisory_file::read(path) {
+                Ok(Some(file)) => {
+                    let status = AdvisoryDatabaseStatus::Read {
+                        path: path.to_path_buf(),
+                        created: file.header.created.clone(),
+                        counts: file
+                            .header
+                            .ecosystems
+                            .iter()
+                            .map(|e| (e.name.clone(), e.advisories))
+                            .collect(),
+                    };
+                    (vulnerable_dependency_findings(&file, &all_deps), status)
+                }
+                Ok(None) => (
+                    Vec::new(),
+                    AdvisoryDatabaseStatus::Missing {
+                        path: Some(path.to_path_buf()),
+                    },
+                ),
+                Err(error) => (
+                    Vec::new(),
+                    AdvisoryDatabaseStatus::Unreadable {
+                        path: path.to_path_buf(),
+                        error,
+                    },
+                ),
+            },
+        };
+        advisory_database = Some(status);
         let vulnerable_count = vulnerable.len();
         all_findings.extend(vulnerable);
         dependency_stats = Some(DependencyStats {
@@ -2233,6 +2304,7 @@ pub fn run_scan(config: &ScanConfig) -> ScanReport {
         rule_catalog,
         test_results,
         dependency_stats,
+        advisory_database,
         database_schema,
         database_stats,
         comparison,

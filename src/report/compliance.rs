@@ -186,6 +186,13 @@ fn load_iso27001_mapping() -> Iso27001Mapping {
     serde_json::from_str(ISO27001_MAPPING_JSON).expect("iso27001_mapping.json embarqué invalide")
 }
 
+/// Rule keys of findings the engine emits itself, without a catalog
+/// rule: the dependency checks of `scan --with-deps`
+/// (`scan/orchestrator.rs`). The compliance mappings may name them like
+/// any rule; every other mapping key must be a catalog rule id
+/// (ticket #157).
+pub const ENGINE_RULE_KEYS: &[&str] = &["unpinned_dependency", "vulnerable_dependency"];
+
 /// Ids referenced by a compliance mapping (keys of its `mapping`
 /// section) but absent from the actually compiled rule catalog —
 /// "drift" in the sense of ticket #37/spec #26 (anti-drift guardrail).
@@ -731,20 +738,6 @@ mod tests {
     // self-consistency (the ctrl_ids it references exist in its own
     // `controls` section), not its consistency with the actually
     // compiled rule catalog. ===
-
-
-
-    // === ASVS anti-drift guardrail (ticket #38, priority 2 of spec #26)
-    // — same mechanism as the ISO27001 guardrail above, `drifted_
-    // mapping_ids` utility reused as-is (no second implementation). ===
-
-
-
-    // === NIST CSF anti-drift guardrail (ticket #39, priority 3 of spec
-    // #26) — same mechanism as the ISO27001/ASVS guardrails above,
-    // `drifted_mapping_ids` utility reused as-is (no third
-    // implementation). ===
-
 
 
     #[test]

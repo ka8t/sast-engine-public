@@ -185,16 +185,33 @@ mod tests {
             "scan_invalid_path",
             "scan_invalid_severities",
             "scan_unsupported_config_sections",
-            // Ticket #124: interactive audit.config.json prompt.
-            "config_prompt_not_found",
+            // ADR-0042: advisory database named or "not checked".
+            "scan_advisories_read",
+            "scan_advisories_missing",
+            "scan_advisories_unreadable",
+            // Ticket #124, then 2026-11-12: interactive creation of
+            // audit.config.json (`project::config_wizard`).
             "config_prompt_languages",
-            "config_prompt_include",
-            "config_prompt_question",
             "config_prompt_input_closed",
-            "config_prompt_written",
             "config_prompt_write_error",
-            "config_prompt_declined",
             "config_prompt_yes_answers",
+            "config_wizard_intro",
+            "config_wizard_scope_title",
+            "config_wizard_scope_all",
+            "config_wizard_scope_some",
+            "config_wizard_scope_choice",
+            "config_wizard_no_subfolders",
+            "config_wizard_folders",
+            "config_wizard_pick_include",
+            "config_wizard_bad_numbers",
+            "config_wizard_exclude_question",
+            "config_wizard_no_exclude_candidates",
+            "config_wizard_pick_exclude",
+            "config_wizard_preview",
+            "config_wizard_defaults_note",
+            "config_wizard_write_question",
+            "config_wizard_written",
+            "config_wizard_declined",
         ];
         for lang in ["en", "fr", "es", "de"] {
             let v = load_script_locale(lang);

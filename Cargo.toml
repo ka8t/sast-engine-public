@@ -10,6 +10,9 @@ chrono = { version = "0.4.45", default-features = false, features = ["serde", "c
 clap = { version = "4.6.6", features = ["derive"] }
 crc32fast = "1.4.2"
 fancy-regex = "0.19.0"
+# gzip of the advisory database `advisories.sadb` (ADR-0042), pure Rust
+# backend (miniz_oxide): no C library to build on Windows.
+flate2 = { version = "1.1.11", default-features = false, features = ["rust_backend"] }
 postgres = "0.19.10"
 rayon = "1.12.0"
 regex = "1.13.1"

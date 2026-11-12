@@ -2,7 +2,7 @@
 //! CWE/CVE/OWASP/ISO27001/WCAG references) — port of
 //! `_load_playbook`/`_render_playbook_inline` (`Audit/sca/report.py`).
 //!
-//! `docs/remediation-playbook.json` (227 KB, 225 rules) is static and
+//! `resources/remediation-playbook.json` (560 rules) is static and
 //! embedded at compile time — same choice as the other report
 //! resources (`report_assets.rs`, `compliance.rs`).
 
@@ -149,10 +149,19 @@ mod tests {
     use super::*;
     use crate::i18n::load_report_locale;
 
+    /// The embedded playbook parses and its `total_rules` header matches
+    /// the entries it holds (it said 204 for 225 entries before #157,
+    /// which filled one entry per security rule of the catalog).
     #[test]
-    fn test_playbook_loads_225_rules() {
+    fn test_playbook_loads_and_total_rules_matches() {
         let p = load_playbook();
-        assert_eq!(p.rules.len(), 225);
+        let header: Value = serde_json::from_str(PLAYBOOK_JSON).unwrap();
+        assert_eq!(
+            header["total_rules"].as_u64(),
+            Some(p.rules.len() as u64),
+            "total_rules is stale"
+        );
+        assert!(p.rules.len() >= 560, "{}", p.rules.len());
     }
 
     #[test]
