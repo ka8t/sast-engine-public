@@ -105,9 +105,30 @@ After the scan, one line names each folder skipped this way and why (`--quiet` h
 
 ## Installing the full rule catalog
 
-CodeFixture sends you the full catalog as one file, `rules.scapack`.
+Without the full catalog, the engine scans with the 38 demo rules of `rules/rules.scapack`: nothing else is needed. CodeFixture sends a client under contract the full catalog as one file, `rules.scapack` (about 2 MB, more than 700 rule files). Keep it outside your `sast-engine-public` folder, so that `git pull` never meets a modified file, and copy it next to the engine after each build: `cargo build` puts the demo pack back there.
 
-1. Replace `target/release/rules.scapack` with it, or keep it elsewhere and pass `--rules /path/to/rules.scapack` to each scan.
-2. Run `sast-engine rules list target/release/rules.scapack`: it prints the number of rule files the pack holds.
+On macOS:
 
-The next scan prints the pack it read and a higher rule count. `cargo build` copies `rules/rules.scapack` back over `target/release/rules.scapack`, and `cargo clean` deletes `target/`: keep a copy of the full pack elsewhere, or also replace `rules/rules.scapack` with it so every build puts the full pack next to the engine.
+```bash
+mkdir -p ~/sast-engine-rules
+cp ~/Downloads/rules.scapack ~/sast-engine-rules/
+cd ~/sast-engine-public
+cargo build --release
+cp ~/sast-engine-rules/rules.scapack target/release/rules.scapack
+./target/release/sast-engine rules list target/release/rules.scapack | head -1
+```
+
+On Windows:
+
+```powershell
+mkdir ~\sast-engine-rules
+copy ~\Downloads\rules.scapack ~\sast-engine-rules\
+cd ~\sast-engine-public
+cargo build --release
+copy ~\sast-engine-rules\rules.scapack target\release\rules.scapack
+.\target\release\sast-engine.exe rules list target\release\rules.scapack
+```
+
+`rules list` prints the number of rule files on its first line: more than 700 for the full catalog, 38 for the demo one. The next scan names the pack it read and loads more rules.
+
+To update: `git pull`, `cargo build --release`, then the copy command again. Instead of copying, you can also pass `--rules ~/sast-engine-rules/rules.scapack` to each scan. `cargo clean` deletes `target/`, never your copy in `sast-engine-rules`.
