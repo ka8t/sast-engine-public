@@ -6084,7 +6084,12 @@
         {
           "order": 1,
           "action": "Locate the run: step that echoes the secret directly",
-          "type": "diagnostic"
+          "type": "diagnostic",
+          "action_i18n": {
+            "fr": "Repérez l'étape run: qui affiche directement le secret",
+            "es": "Localice el paso run: que muestra el secreto directamente",
+            "de": "Suchen Sie den run:-Schritt, der das Geheimnis direkt ausgibt"
+          }
         },
         {
           "order": 2,
@@ -6115,7 +6120,12 @@
         {
           "order": 1,
           "action": "Search for ::set-env:: and ::add-path:: patterns in workflow run: blocks",
-          "type": "diagnostic"
+          "type": "diagnostic",
+          "action_i18n": {
+            "fr": "Recherchez les motifs ::set-env:: et ::add-path:: dans les blocs run: du workflow",
+            "es": "Busque los patrones ::set-env:: y ::add-path:: en los bloques run: del workflow",
+            "de": "Suchen Sie nach ::set-env::- und ::add-path::-Mustern in den run:-Blöcken des Workflows"
+          }
         },
         {
           "order": 2,
@@ -6146,7 +6156,12 @@
         {
           "order": 1,
           "action": "Identify workflow_run triggers that download artifacts without checksum verification",
-          "type": "diagnostic"
+          "type": "diagnostic",
+          "action_i18n": {
+            "fr": "Repérez les déclencheurs workflow_run qui téléchargent des artefacts sans vérifier leur somme de contrôle",
+            "es": "Identifique los disparadores workflow_run que descargan artefactos sin verificar su suma de comprobación",
+            "de": "Ermitteln Sie workflow_run-Auslöser, die Artefakte ohne Prüfsummenkontrolle herunterladen"
+          }
         },
         {
           "order": 2,
@@ -6177,7 +6192,12 @@
         {
           "order": 1,
           "action": "Identify jobs using runs-on: self-hosted or runs-on: [self-hosted, ...]",
-          "type": "diagnostic"
+          "type": "diagnostic",
+          "action_i18n": {
+            "fr": "Repérez les jobs qui utilisent runs-on: self-hosted ou runs-on: [self-hosted, ...]",
+            "es": "Identifique los jobs que usan runs-on: self-hosted o runs-on: [self-hosted, ...]",
+            "de": "Ermitteln Sie Jobs mit runs-on: self-hosted oder runs-on: [self-hosted, ...]"
+          }
         },
         {
           "order": 2,
@@ -6208,7 +6228,12 @@
         {
           "order": 1,
           "action": "Locate curl|bash or wget|sh patterns in CI/CD script blocks",
-          "type": "diagnostic"
+          "type": "diagnostic",
+          "action_i18n": {
+            "fr": "Repérez les motifs curl|bash ou wget|sh dans les blocs de script CI/CD",
+            "es": "Localice los patrones curl|bash o wget|sh en los bloques de script de CI/CD",
+            "de": "Suchen Sie curl|bash- oder wget|sh-Muster in CI/CD-Skriptblöcken"
+          }
         },
         {
           "order": 2,
@@ -6239,7 +6264,12 @@
         {
           "order": 1,
           "action": "Locate curl http:// or wget http:// patterns in CI/CD script blocks",
-          "type": "diagnostic"
+          "type": "diagnostic",
+          "action_i18n": {
+            "fr": "Repérez les motifs curl http:// ou wget http:// dans les blocs de script CI/CD",
+            "es": "Localice los patrones curl http:// o wget http:// en los bloques de script de CI/CD",
+            "de": "Suchen Sie curl http://- oder wget http://-Muster in CI/CD-Skriptblöcken"
+          }
         },
         {
           "order": 2,
@@ -6270,7 +6300,12 @@
         {
           "order": 1,
           "action": "Identify hardcoded credentials (password:, token:, api_key:) with literal values in the CI/CD YAML",
-          "type": "diagnostic"
+          "type": "diagnostic",
+          "action_i18n": {
+            "fr": "Repérez les identifiants écrits en dur (password:, token:, api_key:) avec une valeur littérale dans le YAML CI/CD",
+            "es": "Identifique las credenciales escritas en el código (password:, token:, api_key:) con valores literales en el YAML de CI/CD",
+            "de": "Ermitteln Sie fest eingetragene Zugangsdaten (password:, token:, api_key:) mit literalen Werten im CI/CD-YAML"
+          }
         },
         {
           "order": 2,
@@ -6280,7 +6315,12 @@
         {
           "order": 3,
           "action": "Rotate the exposed credential immediately, then run the audit again to verify the finding is resolved",
-          "type": "verification"
+          "type": "verification",
+          "action_i18n": {
+            "fr": "Renouvelez immédiatement l'identifiant exposé, puis relancez l'audit pour vérifier que le finding est résolu",
+            "es": "Renueve de inmediato la credencial expuesta y vuelva a ejecutar la auditoría para verificar que el hallazgo está resuelto",
+            "de": "Erneuern Sie die offengelegten Zugangsdaten sofort und führen Sie das Audit erneut aus, um zu prüfen, dass der Befund behoben ist"
+          }
         }
       ],
       "benefit": "Eliminates credential exposure in version control history and CI/CD logs (OWASP CI-CD-04, CWE-798).",
@@ -6302,7 +6342,12 @@
         {
           "order": 1,
           "action": "Locate image: xxx:latest patterns in CI/CD YAML files",
-          "type": "diagnostic"
+          "type": "diagnostic",
+          "action_i18n": {
+            "fr": "Repérez les motifs image: xxx:latest dans les fichiers YAML CI/CD",
+            "es": "Localice los patrones image: xxx:latest en los archivos YAML de CI/CD",
+            "de": "Suchen Sie image: xxx:latest-Muster in CI/CD-YAML-Dateien"
+          }
         },
         {
           "order": 2,
@@ -6333,7 +6378,12 @@
         {
           "order": 1,
           "action": "Identify security jobs (sast, dast, secret_detection, etc.) with allow_failure: true",
-          "type": "diagnostic"
+          "type": "diagnostic",
+          "action_i18n": {
+            "fr": "Repérez les jobs de sécurité (sast, dast, secret_detection, etc.) avec allow_failure: true",
+            "es": "Identifique los jobs de seguridad (sast, dast, secret_detection, etc.) con allow_failure: true",
+            "de": "Ermitteln Sie Sicherheitsjobs (sast, dast, secret_detection usw.) mit allow_failure: true"
+          }
         },
         {
           "order": 2,
@@ -6364,7 +6414,12 @@
         {
           "order": 1,
           "action": "Locate echo statements printing $CI_JOB_TOKEN, $GITLAB_TOKEN, $CI_REGISTRY_PASSWORD or $CI_DEPLOY_TOKEN",
-          "type": "diagnostic"
+          "type": "diagnostic",
+          "action_i18n": {
+            "fr": "Repérez les commandes echo qui affichent $CI_JOB_TOKEN, $GITLAB_TOKEN, $CI_REGISTRY_PASSWORD ou $CI_DEPLOY_TOKEN",
+            "es": "Localice las instrucciones echo que muestran $CI_JOB_TOKEN, $GITLAB_TOKEN, $CI_REGISTRY_PASSWORD o $CI_DEPLOY_TOKEN",
+            "de": "Suchen Sie echo-Befehle, die $CI_JOB_TOKEN, $GITLAB_TOKEN, $CI_REGISTRY_PASSWORD oder $CI_DEPLOY_TOKEN ausgeben"
+          }
         },
         {
           "order": 2,
@@ -6878,102 +6933,352 @@
     "html_invalid_aria_role": {
       "title": "Empty ARIA role attribute",
       "steps": [
-        {"order": 1, "action": "Locate all role=\"\" occurrences in HTML templates", "type": "diagnostic"},
-        {"order": 2, "action": "Replace with a valid ARIA role matching the element's purpose (e.g. role=\"dialog\", role=\"navigation\", role=\"button\")", "type": "code_change"},
-        {"order": 3, "action": "Verify with a screen reader or axe-core that the element is correctly announced", "type": "verification"}
+        {
+          "order": 1,
+          "action": "Locate all role=\"\" occurrences in HTML templates",
+          "type": "diagnostic",
+          "action_i18n": {
+            "fr": "Repérez toutes les occurrences de role=\"\" dans les gabarits HTML",
+            "es": "Localice todas las apariciones de role=\"\" en las plantillas HTML",
+            "de": "Suchen Sie alle Vorkommen von role=\"\" in HTML-Vorlagen"
+          }
+        },
+        {
+          "order": 2,
+          "action": "Replace with a valid ARIA role matching the element's purpose (e.g. role=\"dialog\", role=\"navigation\", role=\"button\")",
+          "type": "code_change"
+        },
+        {
+          "order": 3,
+          "action": "Verify with a screen reader or axe-core that the element is correctly announced",
+          "type": "verification",
+          "action_i18n": {
+            "fr": "Vérifiez avec un lecteur d'écran ou axe-core que l'élément est correctement annoncé",
+            "es": "Verifique con un lector de pantalla o axe-core que el elemento se anuncia correctamente",
+            "de": "Prüfen Sie mit einem Screenreader oder axe-core, dass das Element korrekt angesagt wird"
+          }
+        }
       ],
       "benefit": "WCAG 4.1.2 compliance — correct semantics for assistive technologies.",
-      "references": {"wcag": "WCAG 4.1.2", "iso25010": "Usability.Accessibility"}
+      "references": {
+        "wcag": "WCAG 4.1.2",
+        "iso25010": "Usability.Accessibility"
+      }
     },
     "html_aria_hidden_focusable": {
       "title": "Focusable element hidden with aria-hidden",
       "steps": [
-        {"order": 1, "action": "Identify all focusable elements (a, button, input, select, textarea) with aria-hidden=\"true\"", "type": "diagnostic"},
-        {"order": 2, "action": "Add tabindex=\"-1\" to remove from keyboard flow while keeping aria-hidden, or remove aria-hidden and add an accessible label instead", "type": "code_change"},
-        {"order": 3, "action": "Test keyboard navigation: Tab must not land on elements hidden from assistive technologies", "type": "verification"}
+        {
+          "order": 1,
+          "action": "Identify all focusable elements (a, button, input, select, textarea) with aria-hidden=\"true\"",
+          "type": "diagnostic",
+          "action_i18n": {
+            "fr": "Repérez tous les éléments focalisables (a, button, input, select, textarea) avec aria-hidden=\"true\"",
+            "es": "Identifique todos los elementos enfocables (a, button, input, select, textarea) con aria-hidden=\"true\"",
+            "de": "Ermitteln Sie alle fokussierbaren Elemente (a, button, input, select, textarea) mit aria-hidden=\"true\""
+          }
+        },
+        {
+          "order": 2,
+          "action": "Add tabindex=\"-1\" to remove from keyboard flow while keeping aria-hidden, or remove aria-hidden and add an accessible label instead",
+          "type": "code_change"
+        },
+        {
+          "order": 3,
+          "action": "Test keyboard navigation: Tab must not land on elements hidden from assistive technologies",
+          "type": "verification",
+          "action_i18n": {
+            "fr": "Testez la navigation au clavier : Tab ne doit pas s'arrêter sur des éléments masqués aux technologies d'assistance",
+            "es": "Pruebe la navegación con teclado: Tab no debe detenerse en elementos ocultos a las tecnologías de asistencia",
+            "de": "Testen Sie die Tastaturnavigation: Tab darf nicht auf Elementen landen, die vor Hilfstechnologien verborgen sind"
+          }
+        }
       ],
       "benefit": "WCAG 1.3.1 and 4.1.2 compliance — coherent keyboard navigation for screen reader users.",
-      "references": {"wcag": "WCAG 1.3.1, WCAG 4.1.2", "iso25010": "Usability.Accessibility"}
+      "references": {
+        "wcag": "WCAG 1.3.1, WCAG 4.1.2",
+        "iso25010": "Usability.Accessibility"
+      }
     },
     "html_viewport_zoom_disabled": {
       "title": "User zoom disabled in viewport meta tag",
       "steps": [
-        {"order": 1, "action": "Find the <meta name=\"viewport\"> tag in the HTML head", "type": "diagnostic"},
-        {"order": 2, "action": "Remove user-scalable=no from the content attribute. Keep only: width=device-width, initial-scale=1", "type": "code_change"},
-        {"order": 3, "action": "Test on a mobile device that pinch-to-zoom and browser zoom work correctly", "type": "verification"}
+        {
+          "order": 1,
+          "action": "Find the <meta name=\"viewport\"> tag in the HTML head",
+          "type": "diagnostic",
+          "action_i18n": {
+            "fr": "Repérez la balise <meta name=\"viewport\"> dans l'en-tête HTML",
+            "es": "Localice la etiqueta <meta name=\"viewport\"> en la cabecera HTML",
+            "de": "Suchen Sie das <meta name=\"viewport\">-Tag im HTML-Kopf"
+          }
+        },
+        {
+          "order": 2,
+          "action": "Remove user-scalable=no from the content attribute. Keep only: width=device-width, initial-scale=1",
+          "type": "code_change"
+        },
+        {
+          "order": 3,
+          "action": "Test on a mobile device that pinch-to-zoom and browser zoom work correctly",
+          "type": "verification",
+          "action_i18n": {
+            "fr": "Vérifiez sur un appareil mobile que le zoom au pincement et le zoom du navigateur fonctionnent",
+            "es": "Compruebe en un dispositivo móvil que el zoom con los dedos y el del navegador funcionan correctamente",
+            "de": "Prüfen Sie auf einem Mobilgerät, dass Pinch-to-Zoom und Browser-Zoom funktionieren"
+          }
+        }
       ],
       "benefit": "WCAG 1.4.4 compliance — users can resize text up to 200% without loss of functionality.",
-      "references": {"wcag": "WCAG 1.4.4", "iso25010": "Usability.Accessibility"}
+      "references": {
+        "wcag": "WCAG 1.4.4",
+        "iso25010": "Usability.Accessibility"
+      }
     },
     "html_select_missing_label": {
       "title": "Select element without accessible label",
       "steps": [
-        {"order": 1, "action": "Identify all <select> elements without an associated <label> or aria-label", "type": "diagnostic"},
-        {"order": 2, "action": "Add <label for=\"select-id\"> pointing to the select's id, or add aria-label=\"Description\" directly on the select element", "type": "code_change"},
-        {"order": 3, "action": "Verify with axe-core or a screen reader that the select is correctly announced with its label", "type": "verification"}
+        {
+          "order": 1,
+          "action": "Identify all <select> elements without an associated <label> or aria-label",
+          "type": "diagnostic",
+          "action_i18n": {
+            "fr": "Repérez tous les éléments <select> sans <label> associé ni aria-label",
+            "es": "Identifique todos los elementos <select> sin <label> asociado ni aria-label",
+            "de": "Ermitteln Sie alle <select>-Elemente ohne zugeordnetes <label> oder aria-label"
+          }
+        },
+        {
+          "order": 2,
+          "action": "Add <label for=\"select-id\"> pointing to the select's id, or add aria-label=\"Description\" directly on the select element",
+          "type": "code_change"
+        },
+        {
+          "order": 3,
+          "action": "Verify with axe-core or a screen reader that the select is correctly announced with its label",
+          "type": "verification",
+          "action_i18n": {
+            "fr": "Vérifiez avec axe-core ou un lecteur d'écran que la liste est annoncée avec son libellé",
+            "es": "Verifique con axe-core o un lector de pantalla que el select se anuncia con su etiqueta",
+            "de": "Prüfen Sie mit axe-core oder einem Screenreader, dass das Auswahlfeld mit seiner Beschriftung angesagt wird"
+          }
+        }
       ],
       "benefit": "WCAG 1.3.1 and 4.1.2 compliance — all form controls have an accessible name.",
-      "references": {"wcag": "WCAG 1.3.1, WCAG 4.1.2", "iso25010": "Usability.Accessibility"}
+      "references": {
+        "wcag": "WCAG 1.3.1, WCAG 4.1.2",
+        "iso25010": "Usability.Accessibility"
+      }
     },
     "html_input_button_empty": {
       "title": "Button input without value attribute",
       "steps": [
-        {"order": 1, "action": "Find all <input type=\"submit\">, <input type=\"reset\">, <input type=\"button\"> without a value attribute", "type": "diagnostic"},
-        {"order": 2, "action": "Add a descriptive value attribute (e.g. value=\"Submit form\") or replace with <button type=\"submit\">Submit form</button>", "type": "code_change"},
-        {"order": 3, "action": "Verify the button is announced correctly by a screen reader", "type": "verification"}
+        {
+          "order": 1,
+          "action": "Find all <input type=\"submit\">, <input type=\"reset\">, <input type=\"button\"> without a value attribute",
+          "type": "diagnostic",
+          "action_i18n": {
+            "fr": "Repérez tous les <input type=\"submit\">, <input type=\"reset\">, <input type=\"button\"> sans attribut value",
+            "es": "Localice todos los <input type=\"submit\">, <input type=\"reset\">, <input type=\"button\"> sin atributo value",
+            "de": "Suchen Sie alle <input type=\"submit\">, <input type=\"reset\">, <input type=\"button\"> ohne value-Attribut"
+          }
+        },
+        {
+          "order": 2,
+          "action": "Add a descriptive value attribute (e.g. value=\"Submit form\") or replace with <button type=\"submit\">Submit form</button>",
+          "type": "code_change"
+        },
+        {
+          "order": 3,
+          "action": "Verify the button is announced correctly by a screen reader",
+          "type": "verification",
+          "action_i18n": {
+            "fr": "Vérifiez que le bouton est correctement annoncé par un lecteur d'écran",
+            "es": "Verifique que un lector de pantalla anuncia correctamente el botón",
+            "de": "Prüfen Sie, dass ein Screenreader die Schaltfläche korrekt ansagt"
+          }
+        }
       ],
       "benefit": "WCAG 4.1.2 compliance — every interactive control has an accessible name.",
-      "references": {"wcag": "WCAG 4.1.2", "iso25010": "Usability.Accessibility"}
+      "references": {
+        "wcag": "WCAG 4.1.2",
+        "iso25010": "Usability.Accessibility"
+      }
     },
     "html_autocomplete_invalid": {
       "title": "Non-standard autocomplete attribute value",
       "steps": [
-        {"order": 1, "action": "Find all inputs with autocomplete set to non-standard values (yes, true, false, enabled, disabled)", "type": "diagnostic"},
-        {"order": 2, "action": "Replace with a valid HTML5 autocomplete token matching the field purpose: email, username, current-password, new-password, name, tel, off, on, etc.", "type": "code_change"},
-        {"order": 3, "action": "Test autofill in a browser to confirm the correct data is suggested", "type": "verification"}
+        {
+          "order": 1,
+          "action": "Find all inputs with autocomplete set to non-standard values (yes, true, false, enabled, disabled)",
+          "type": "diagnostic",
+          "action_i18n": {
+            "fr": "Repérez tous les champs dont autocomplete a une valeur non standard (yes, true, false, enabled, disabled)",
+            "es": "Localice todos los campos con autocomplete en valores no estándar (yes, true, false, enabled, disabled)",
+            "de": "Suchen Sie alle Eingabefelder mit nicht standardmäßigen autocomplete-Werten (yes, true, false, enabled, disabled)"
+          }
+        },
+        {
+          "order": 2,
+          "action": "Replace with a valid HTML5 autocomplete token matching the field purpose: email, username, current-password, new-password, name, tel, off, on, etc.",
+          "type": "code_change"
+        },
+        {
+          "order": 3,
+          "action": "Test autofill in a browser to confirm the correct data is suggested",
+          "type": "verification",
+          "action_i18n": {
+            "fr": "Testez le remplissage automatique dans un navigateur pour confirmer que les bonnes données sont proposées",
+            "es": "Pruebe el autocompletado en un navegador para confirmar que se sugieren los datos correctos",
+            "de": "Testen Sie das automatische Ausfüllen im Browser, um zu bestätigen, dass die richtigen Daten vorgeschlagen werden"
+          }
+        }
       ],
       "benefit": "WCAG 1.3.5 compliance — input purpose is identifiable, enabling correct autofill for all users.",
-      "references": {"wcag": "WCAG 1.3.5", "iso25010": "Usability.Accessibility"}
+      "references": {
+        "wcag": "WCAG 1.3.5",
+        "iso25010": "Usability.Accessibility"
+      }
     },
     "html_th_scope_missing": {
       "title": "Table header without scope attribute",
       "steps": [
-        {"order": 1, "action": "Find all <th> elements in HTML tables without a scope attribute", "type": "diagnostic"},
-        {"order": 2, "action": "Add scope=\"col\" for column headers and scope=\"row\" for row headers", "type": "code_change"},
-        {"order": 3, "action": "Test with a screen reader to verify the table is correctly navigable", "type": "verification"}
+        {
+          "order": 1,
+          "action": "Find all <th> elements in HTML tables without a scope attribute",
+          "type": "diagnostic",
+          "action_i18n": {
+            "fr": "Repérez tous les éléments <th> des tableaux HTML sans attribut scope",
+            "es": "Localice todos los elementos <th> de las tablas HTML sin atributo scope",
+            "de": "Suchen Sie alle <th>-Elemente in HTML-Tabellen ohne scope-Attribut"
+          }
+        },
+        {
+          "order": 2,
+          "action": "Add scope=\"col\" for column headers and scope=\"row\" for row headers",
+          "type": "code_change"
+        },
+        {
+          "order": 3,
+          "action": "Test with a screen reader to verify the table is correctly navigable",
+          "type": "verification",
+          "action_i18n": {
+            "fr": "Vérifiez avec un lecteur d'écran que le tableau se parcourt correctement",
+            "es": "Compruebe con un lector de pantalla que la tabla se recorre correctamente",
+            "de": "Prüfen Sie mit einem Screenreader, dass die Tabelle korrekt navigierbar ist"
+          }
+        }
       ],
       "benefit": "WCAG 1.3.1 compliance — table structure is programmatically determinable.",
-      "references": {"wcag": "WCAG 1.3.1", "iso25010": "Usability.Accessibility"}
+      "references": {
+        "wcag": "WCAG 1.3.1",
+        "iso25010": "Usability.Accessibility"
+      }
     },
     "html_missing_main_landmark": {
       "title": "Missing main landmark element",
       "steps": [
-        {"order": 1, "action": "Check if the page has a <main> element or an element with role=\"main\"", "type": "diagnostic"},
-        {"order": 2, "action": "Wrap the primary page content in <main>...</main>. Use only one <main> per page", "type": "code_change"},
-        {"order": 3, "action": "Test with a screen reader: verify users can skip to main content with a keyboard shortcut", "type": "verification"}
+        {
+          "order": 1,
+          "action": "Check if the page has a <main> element or an element with role=\"main\"",
+          "type": "diagnostic",
+          "action_i18n": {
+            "fr": "Vérifiez que la page contient un élément <main> ou un élément avec role=\"main\"",
+            "es": "Compruebe si la página tiene un elemento <main> o un elemento con role=\"main\"",
+            "de": "Prüfen Sie, ob die Seite ein <main>-Element oder ein Element mit role=\"main\" enthält"
+          }
+        },
+        {
+          "order": 2,
+          "action": "Wrap the primary page content in <main>...</main>. Use only one <main> per page",
+          "type": "code_change"
+        },
+        {
+          "order": 3,
+          "action": "Test with a screen reader: verify users can skip to main content with a keyboard shortcut",
+          "type": "verification",
+          "action_i18n": {
+            "fr": "Testez avec un lecteur d'écran : l'utilisateur doit pouvoir aller au contenu principal par un raccourci clavier",
+            "es": "Pruebe con un lector de pantalla: el usuario debe poder saltar al contenido principal con un atajo de teclado",
+            "de": "Testen Sie mit einem Screenreader: Nutzer müssen per Tastenkürzel zum Hauptinhalt springen können"
+          }
+        }
       ],
       "benefit": "WCAG 1.3.6 and 2.4.1 compliance — users can bypass navigation and jump to main content.",
-      "references": {"wcag": "WCAG 1.3.6, WCAG 2.4.1", "iso25010": "Usability.Accessibility"}
+      "references": {
+        "wcag": "WCAG 1.3.6, WCAG 2.4.1",
+        "iso25010": "Usability.Accessibility"
+      }
     },
     "html_invalid_lang_value": {
       "title": "Non-BCP-47 lang attribute value",
       "steps": [
-        {"order": 1, "action": "Find all lang attributes using plain language names (french, english, spanish, german, etc.)", "type": "diagnostic"},
-        {"order": 2, "action": "Replace with valid BCP 47 codes: fr, en, es, de, it, pt, nl, pl, ar, zh, ja, ko, ru, sv, etc.", "type": "code_change"},
-        {"order": 3, "action": "Validate using the W3C Language Tag checker or a screen reader pronunciation test", "type": "verification"}
+        {
+          "order": 1,
+          "action": "Find all lang attributes using plain language names (french, english, spanish, german, etc.)",
+          "type": "diagnostic",
+          "action_i18n": {
+            "fr": "Repérez tous les attributs lang qui utilisent un nom de langue en clair (french, english, spanish, german, etc.)",
+            "es": "Localice todos los atributos lang que usan nombres de idioma en texto (french, english, spanish, german, etc.)",
+            "de": "Suchen Sie alle lang-Attribute mit ausgeschriebenen Sprachnamen (french, english, spanish, german usw.)"
+          }
+        },
+        {
+          "order": 2,
+          "action": "Replace with valid BCP 47 codes: fr, en, es, de, it, pt, nl, pl, ar, zh, ja, ko, ru, sv, etc.",
+          "type": "code_change"
+        },
+        {
+          "order": 3,
+          "action": "Validate using the W3C Language Tag checker or a screen reader pronunciation test",
+          "type": "verification",
+          "action_i18n": {
+            "fr": "Validez avec le vérificateur d'étiquettes de langue du W3C ou un test de prononciation au lecteur d'écran",
+            "es": "Valide con el verificador de etiquetas de idioma del W3C o con una prueba de pronunciación en un lector de pantalla",
+            "de": "Prüfen Sie mit dem W3C Language Tag Checker oder einem Aussprachetest im Screenreader"
+          }
+        }
       ],
       "benefit": "WCAG 3.1.1 and 3.1.2 compliance — correct language codes enable proper screen reader pronunciation.",
-      "references": {"wcag": "WCAG 3.1.1, WCAG 3.1.2", "iso25010": "Usability.Accessibility"}
+      "references": {
+        "wcag": "WCAG 3.1.1, WCAG 3.1.2",
+        "iso25010": "Usability.Accessibility"
+      }
     },
     "html_video_missing_captions": {
       "title": "Video without caption track",
       "steps": [
-        {"order": 1, "action": "Find all <video> elements without a <track kind=\"captions\"> child element", "type": "diagnostic"},
-        {"order": 2, "action": "Create a WebVTT (.vtt) or SRT subtitle file for the video. Add <track kind=\"captions\" src=\"file.vtt\" srclang=\"fr\" label=\"Français\"> inside the <video> tag", "type": "code_change"},
-        {"order": 3, "action": "Test in a browser that captions display correctly when enabled", "type": "verification"}
+        {
+          "order": 1,
+          "action": "Find all <video> elements without a <track kind=\"captions\"> child element",
+          "type": "diagnostic",
+          "action_i18n": {
+            "fr": "Repérez tous les éléments <video> sans élément enfant <track kind=\"captions\">",
+            "es": "Localice todos los elementos <video> sin elemento hijo <track kind=\"captions\">",
+            "de": "Suchen Sie alle <video>-Elemente ohne <track kind=\"captions\">-Kindelement"
+          }
+        },
+        {
+          "order": 2,
+          "action": "Create a WebVTT (.vtt) or SRT subtitle file for the video. Add <track kind=\"captions\" src=\"file.vtt\" srclang=\"fr\" label=\"Français\"> inside the <video> tag",
+          "type": "code_change"
+        },
+        {
+          "order": 3,
+          "action": "Test in a browser that captions display correctly when enabled",
+          "type": "verification",
+          "action_i18n": {
+            "fr": "Vérifiez dans un navigateur que les sous-titres s'affichent correctement une fois activés",
+            "es": "Compruebe en un navegador que los subtítulos se muestran correctamente al activarlos",
+            "de": "Prüfen Sie im Browser, dass Untertitel nach dem Aktivieren korrekt angezeigt werden"
+          }
+        }
       ],
       "benefit": "WCAG 1.2.2 compliance — all prerecorded synchronized media has captions.",
-      "references": {"wcag": "WCAG 1.2.2", "iso25010": "Usability.Accessibility"}
+      "references": {
+        "wcag": "WCAG 1.2.2",
+        "iso25010": "Usability.Accessibility"
+      }
     },
     "xml_bomb": {
       "title": "XML Bomb (Billion Laughs) via unprotected XML parser",
@@ -6982,9 +7287,26 @@
       "language": "python",
       "risk": "Parsing user-supplied XML with the standard library (xml.etree, xml.dom, xml.sax) without disabling DTD entity expansion enables Billion Laughs attacks — a small payload causes exponential memory consumption and denial of service (CWE-776, CWE-400).",
       "steps": [
-        {"order": 1, "action": "Locate stdlib XML parser calls (xml.etree, xml.dom, xml.sax) that consume user-supplied data", "type": "diagnostic"},
-        {"order": 2, "action": "Replace the import with defusedxml (e.g. import defusedxml.ElementTree as ET), a drop-in replacement that disables entity expansion by default. Alternatively, reject any XML input containing a DOCTYPE declaration before parsing.", "type": "code_change"},
-        {"order": 3, "action": "Run the audit again to verify the finding is resolved", "type": "verification"}
+        {
+          "order": 1,
+          "action": "Locate stdlib XML parser calls (xml.etree, xml.dom, xml.sax) that consume user-supplied data",
+          "type": "diagnostic",
+          "action_i18n": {
+            "fr": "Repérez les appels aux analyseurs XML de la bibliothèque standard (xml.etree, xml.dom, xml.sax) qui lisent des données fournies par l'utilisateur",
+            "es": "Localice las llamadas a los analizadores XML de la biblioteca estándar (xml.etree, xml.dom, xml.sax) que procesan datos del usuario",
+            "de": "Suchen Sie Aufrufe der XML-Parser der Standardbibliothek (xml.etree, xml.dom, xml.sax), die vom Benutzer gelieferte Daten verarbeiten"
+          }
+        },
+        {
+          "order": 2,
+          "action": "Replace the import with defusedxml (e.g. import defusedxml.ElementTree as ET), a drop-in replacement that disables entity expansion by default. Alternatively, reject any XML input containing a DOCTYPE declaration before parsing.",
+          "type": "code_change"
+        },
+        {
+          "order": 3,
+          "action": "Run the audit again to verify the finding is resolved",
+          "type": "verification"
+        }
       ],
       "benefit": "Prevents XML bomb (Billion Laughs) denial-of-service attacks.",
       "references": {

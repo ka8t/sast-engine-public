@@ -44,7 +44,7 @@ use rayon::prelude::*;
 use tree_sitter::{Parser as TsParser, Tree};
 
 use crate::project::suppress::{Suppressions, is_inline_ignored};
-use crate::report::exports::sarif::{ReportFinding, TaintFlow};
+use crate::report::exports::sarif::{ReportFinding, TaintFlow, TaintStep};
 use crate::scan::counters::{count_java_loc, count_js_loc, count_python_loc};
 use crate::scan::dataflow::call_graph::{CallGraph, FileInput};
 use crate::scan::dataflow::csharp_summary::{
@@ -790,7 +790,37 @@ fn engine_finding_to_report(
 /// Safe fallback when `f.flow` does not clearly distinguish
 /// source/sink (hybrid text-based engines): uses `f.source_line`/
 /// `f.line` directly rather than inventing a step.
-fn build_taint_flow(f: &crate::scan::dataflow::transfer::Finding, rel_path: &str) -> TaintFlow {
+fn build_taint_flow(
+    f: &crate::scan::dataflow::transfer::Finding,
+    rel_path: &str,
+    source_lines: &[String],
+) -> TaintFlow {
+    // Each step with its file and real code line: a step stamped by the
+    // call graph carries both; any other one is in this file.
+    let steps: Vec<TaintStep> = f
+        .flow
+        .iter()
+        .map(|s| {
+            let code = s
+                .code
+                .clone()
+                .or_else(|| {
+                    s.file
+                        .is_none()
+                        .then(|| source_lines.get(s.line.wrapping_sub(1)))
+                        .flatten()
+                        .map(|l| l.trim().to_string())
+                })
+                .filter(|c| !c.is_empty())
+                .unwrap_or_else(|| s.text.clone());
+            TaintStep {
+                kind: s.kind.clone(),
+                file: s.file.clone().unwrap_or_else(|| rel_path.to_string()),
+                line: s.line,
+                code,
+            }
+        })
+        .collect();
     let source_step = f.flow.iter().find(|s| s.kind == "source");
     let sink_step = f.flow.iter().rev().find(|s| s.kind == "sink");
     let chain: Vec<(usize, String, String)> = f
@@ -809,6 +839,7 @@ fn build_taint_flow(f: &crate::scan::dataflow::transfer::Finding, rel_path: &str
         sink_line: f.line,
         sink_expr: sink_step.map_or_else(|| f.sink_text.clone(), |s| s.text.clone()),
         source_kind: f.source_kind.clone(),
+        steps,
     }
 }
 
@@ -821,7 +852,7 @@ fn taint_finding_to_report(
 ) -> ReportFinding {
     let (context_before, context_after) =
         crate::report::text::context_lines(source_lines, f.line, 2);
-    let flow = build_taint_flow(f, rel_path);
+    let flow = build_taint_flow(f, rel_path, source_lines);
     // Actual code line displayed in the highlighted block — mirrors
     // `self._get_line_content(flow.sink_file, flow.sink_line)` on the
     // `rule_engine.py::_integrate_taint_flow` side. `f.sink_text`
@@ -2828,6 +2859,7 @@ mod tests {
             sink_line: 18,
             sink_expr: "stmt.executeQuery(...)".to_string(),
             source_kind: "http".to_string(),
+            steps: vec![],
         });
         let mut dup = finding("sql_injection_java_broad", "SECURITY", "A.java", 18);
         dup.confidence = 70;

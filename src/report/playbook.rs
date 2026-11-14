@@ -19,6 +19,11 @@ const PLAYBOOK_JSON: &str = include_str!("../../resources/remediation-playbook.j
 #[derive(Debug, Deserialize)]
 struct PlaybookStep {
     action: String,
+    /// Translations of a rule-specific step (`fr`, `es`, `de`); the two
+    /// generic steps and the fix step are translated elsewhere (see
+    /// `step_text`).
+    #[serde(default)]
+    action_i18n: BTreeMap<String, String>,
     #[serde(rename = "type")]
     step_type: String,
 }
@@ -78,7 +83,46 @@ fn step_icon(step_type: &str) -> &'static str {
 /// Generates the inline playbook HTML block for a `rule_key`, or an
 /// empty string if the rule has no playbook entry (or no step and no
 /// reference) — port of `_render_playbook_inline`.
-pub fn render_playbook_inline(rule_key: &str, report_locale: &Value) -> String {
+/// The text of a playbook step in the report's language.
+///
+/// The playbook file is written in English. In another language: the
+/// two generic steps ("Locate…", "Run the audit again…") come from the
+/// report locale, the fix step is the rule's own `solution` in that
+/// language (the playbook copies the English one), and a rule-specific
+/// step uses its `action_i18n`. English text stays only as a last
+/// resort. Fixed after a French report showed an English playbook
+/// (2026-11-14); the Python report has the same English-only playbook.
+fn step_text(step: &PlaybookStep, lang: &str, report_locale: &Value, solution: Option<&str>) -> String {
+    const LOCATE: &str = "Locate the vulnerable code pattern in the file";
+    const RERUN: &str = "Run the audit again to verify the finding is resolved";
+    if lang == "en" {
+        return step.action.clone();
+    }
+    match step.step_type.as_str() {
+        "diagnostic" if step.action == LOCATE => t(report_locale, "playbook_step_locate"),
+        "verification" if step.action == RERUN => t(report_locale, "playbook_step_rerun"),
+        "code_change" => solution
+            .filter(|s| !s.is_empty())
+            .map_or_else(|| step.action.clone(), str::to_string),
+        _ => step
+            .action_i18n
+            .get(lang)
+            .cloned()
+            .unwrap_or_else(|| step.action.clone()),
+    }
+}
+
+/// Renders the playbook of `rule_key` in the report's language.
+/// `solution` and `benefit` are the rule's own texts, already in that
+/// language (`ReportFinding`): they replace the English copies the
+/// playbook file holds.
+pub fn render_playbook_inline(
+    rule_key: &str,
+    report_locale: &Value,
+    solution: Option<&str>,
+    benefit: &str,
+) -> String {
+    let lang = t(report_locale, "locale_code");
     let playbook = load_playbook();
     let Some(entry) = playbook.rules.get(rule_key) else {
         return String::new();
@@ -92,7 +136,13 @@ pub fn render_playbook_inline(rule_key: &str, report_locale: &Value) -> String {
     let steps_html: String = entry
         .steps
         .iter()
-        .map(|s| format!("<li>{} {}</li>", step_icon(&s.step_type), escape(&s.action)))
+        .map(|s| {
+            format!(
+                "<li>{} {}</li>",
+                step_icon(&s.step_type),
+                escape(&step_text(s, &lang, report_locale, solution))
+            )
+        })
         .collect();
 
     let mut refs_html = String::new();
@@ -130,11 +180,13 @@ pub fn render_playbook_inline(rule_key: &str, report_locale: &Value) -> String {
         }
     }
 
-    let benefit_html = if !entry.benefit.is_empty() {
-        format!(
-            r#"<p class="playbook-benefit">💡 {}</p>"#,
-            escape(&entry.benefit)
-        )
+    let benefit = if lang != "en" && !benefit.is_empty() {
+        benefit
+    } else {
+        entry.benefit.as_str()
+    };
+    let benefit_html = if !benefit.is_empty() {
+        format!(r#"<p class="playbook-benefit">💡 {}</p>"#, escape(benefit))
     } else {
         String::new()
     };
@@ -165,9 +217,31 @@ mod tests {
     }
 
     #[test]
+    fn test_render_playbook_in_french_has_no_english_step() {
+        // A French report showed this playbook in English (2026-11-14).
+        let fr = load_report_locale("fr");
+        let html = render_playbook_inline(
+            "html_th_scope_missing",
+            &fr,
+            Some("Ajoutez scope=\"col\" ou scope=\"row\"."),
+            "Rend les tableaux lisibles au lecteur d'écran.",
+        );
+        assert!(html.contains("Repérez tous les éléments &lt;th&gt;"), "{html}");
+        assert!(html.contains("Ajoutez scope="), "{html}");
+        assert!(html.contains("Rend les tableaux lisibles"), "{html}");
+        assert!(html.contains("lecteur d&#x27;écran") || html.contains("lecteur d'écran"), "{html}");
+        for english in ["Find all", "Test with a screen reader", "Run the audit"] {
+            assert!(!html.contains(english), "{english}: {html}");
+        }
+        let generic = render_playbook_inline("xss_unsafe_html_construction", &fr, None, "");
+        assert!(generic.contains("Repérez le code vulnérable"), "{generic}");
+        assert!(generic.contains("Relancez l"), "{generic}");
+    }
+
+    #[test]
     fn test_render_playbook_known_rule() {
         let en = load_report_locale("en");
-        let html = render_playbook_inline("autoplay_media", &en);
+        let html = render_playbook_inline("autoplay_media", &en, None, "");
         assert!(html.contains("playbook-details"));
         assert!(html.contains("Locate the vulnerable code pattern"));
         assert!(html.contains("playbook-benefit"));
@@ -176,7 +250,7 @@ mod tests {
     #[test]
     fn test_render_playbook_cwe_reference_link() {
         let en = load_report_locale("en");
-        let html = render_playbook_inline("catch_all_exception", &en);
+        let html = render_playbook_inline("catch_all_exception", &en, None, "");
         assert!(html.contains("CWE-396"));
         assert!(html.contains("https://cwe.mitre.org/data/definitions/396.html"));
     }
@@ -184,6 +258,6 @@ mod tests {
     #[test]
     fn test_render_playbook_unknown_rule_is_empty() {
         let en = load_report_locale("en");
-        assert_eq!(render_playbook_inline("does_not_exist_xyz", &en), "");
+        assert_eq!(render_playbook_inline("does_not_exist_xyz", &en, None, ""), "");
     }
 }

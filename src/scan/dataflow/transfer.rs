@@ -486,6 +486,21 @@ fn aux_match_line(
                 j += 1;
             }
             scan_text = span.join("\n");
+            // A sanitizer written in the continuation clears the sink, as
+            // it does on a one-line call (the sanitizers loop above returns
+            // before this loop). Deliberate deviation from Python
+            // (`transfer.py`), which searched the tainted variable over the
+            // whole call but the sanitizer on its first line only: every
+            // SQLAlchemy `db.execute(\n select(...).where(x == p))` was an
+            // injection (my-ia, 2026-11-14).
+            let continuation = &span[1..].join("\n");
+            if specs.sanitizers.iter().any(|san| {
+                san.raw_regex
+                    .as_ref()
+                    .is_some_and(|rx| rx.is_match(continuation).unwrap_or(false))
+            }) {
+                continue;
+            }
         }
         let scan_text_no_lit = strip_plain_string_literals(&scan_text);
         let mut hit = false;
@@ -508,12 +523,16 @@ fn aux_match_line(
                         line: source.line,
                         kind: "source".to_string(),
                         text: source.expr.clone(),
+                        file: None,
+                        code: None,
                     });
                 }
                 flow.push(FlowStep {
                     line: lineno,
                     kind: "sink".to_string(),
                     text: line_text.trim().to_string(),
+                    file: None,
+                    code: None,
                 });
                 findings.push(Finding {
                     rule_id: specs.rule_id.clone(),
@@ -557,11 +576,15 @@ fn aux_match_line(
                             line: lineno,
                             kind: "source".to_string(),
                             text: line_text.trim().to_string(),
+                            file: None,
+                            code: None,
                         },
                         FlowStep {
                             line: lineno,
                             kind: "sink".to_string(),
                             text: line_text.trim().to_string(),
+                            file: None,
+                            code: None,
                         },
                     ],
                     source_kind: src.kind.clone(),
@@ -817,6 +840,15 @@ pub struct FlowStep {
     /// "source" | "propagation" | "sink".
     pub kind: String,
     pub text: String,
+    /// File of the step, relative to the scanned root, when it differs
+    /// from the finding's own file: set on the steps of a cross-file
+    /// function summary (`call_graph::compute_one`). `None` means the
+    /// finding's file.
+    pub file: Option<String>,
+    /// The source line of the step (trimmed), stamped with `file` so
+    /// that the report can show the code of another file without
+    /// reading it again. `None`: read from the finding's file.
+    pub code: Option<String>,
 }
 
 /// A reported taint finding, conforming to CONTRACT-SCA-AUDITAI.md §3.2.
@@ -1236,6 +1268,8 @@ fn apply_summary_at_call(
                 line: source.line,
                 kind: "source".to_string(),
                 text: source.expr.clone(),
+                file: None,
+                code: None,
             });
         }
         // Explicit interprocedural step (contains "→").
@@ -1243,12 +1277,32 @@ fn apply_summary_at_call(
             line: lineno,
             kind: "propagation".to_string(),
             text: format!("{callee_name}(...) → {}", template.sink_text),
+            file: None,
+            code: None,
         });
-        flow.push(FlowStep {
-            line: template.line,
-            kind: "sink".to_string(),
-            text: template.sink_text.clone(),
-        });
+        // The callee's own path (its propagations and its real sink, with
+        // their file once `call_graph` stamped them), not just its name:
+        // the report must show where the query is actually written
+        // (my-ia: `_reponse(...) → get_usage(...)` named the call, never
+        // the `db.execute` of `quotas.py`). Its source step is the
+        // callee's parameter, replaced by the caller's real source above.
+        let inner: Vec<FlowStep> = template
+            .flow
+            .iter()
+            .filter(|s| s.kind != "source")
+            .cloned()
+            .collect();
+        if inner.iter().any(|s| s.kind == "sink") {
+            flow.extend(inner);
+        } else {
+            flow.push(FlowStep {
+                line: template.line,
+                kind: "sink".to_string(),
+                text: template.sink_text.clone(),
+                file: None,
+                code: None,
+            });
+        }
         out.push(Finding {
             rule_id: specs.rule_id.clone(),
             severity: specs.severity.clone(),
@@ -1303,12 +1357,16 @@ fn check_sink(
                 line: source.line,
                 kind: "source".to_string(),
                 text: source.expr.clone(),
+                file: None,
+                code: None,
             });
         }
         flow.push(FlowStep {
             line: lineno,
             kind: "sink".to_string(),
             text: callee_name.to_string(),
+            file: None,
+            code: None,
         });
         findings.push(Finding {
             rule_id: rule_specs.rule_id.clone(),
@@ -1471,12 +1529,16 @@ fn transfer_assign(
                     line: source.line,
                     kind: "source".to_string(),
                     text: source.expr.clone(),
+                    file: None,
+                    code: None,
                 });
             }
             flow.push(FlowStep {
                 line: lineno,
                 kind: "sink".to_string(),
                 text: target_name.clone(),
+                file: None,
+                code: None,
             });
             findings.push(Finding {
                 rule_id: specs.rule_id.clone(),
@@ -2323,6 +2385,37 @@ mod tests {
             1,
             "la taint sur la ligne de continuation doit être détectée"
         );
+    }
+
+    #[test]
+    fn test_aux_match_line_multiline_sink_cleared_by_sanitizer_in_continuation() {
+        // `db.execute(select(...).where(... == status))` on one line is
+        // cleared by the `select(` sanitizer; the same call split over
+        // several lines must be too (my-ia, SQLAlchemy queries).
+        let mut specs = specs_with(vec![], vec![]);
+        specs.sinks.push(
+            SinkSpec::new("db.execute").with_raw_regex(Regex::new(r"\.execute\s*\(").unwrap()),
+        );
+        specs.sanitizers.push(
+            SanitizerSpec::new("select").with_raw_regex(Regex::new(r"\bselect\s*\(").unwrap()),
+        );
+        let source_lines = vec![
+            "return await db.execute(".to_string(),
+            "    select(Call)".to_string(),
+            "    .where(Call.status == status)".to_string(),
+            ")".to_string(),
+        ];
+        let mut state = empty_state();
+        state = state_set(&state, "status", tainted("http", 1));
+        let stmt = IrStmt::Call {
+            callee: Rhs::VarRef("noop".to_string()),
+            args: vec![],
+            kwargs: vec![],
+            lineno: 1,
+        };
+        let mut findings = Vec::new();
+        aux_match_line(&stmt, &state, &specs, &mut findings, &source_lines);
+        assert!(findings.is_empty(), "{findings:?}");
     }
 
     #[test]

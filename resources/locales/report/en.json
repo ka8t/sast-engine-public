@@ -3935,7 +3935,7 @@
   "threat_risk_medium_text": "{count} {severity_label} — {exposure_label}: 55 days median. Remediation recommended before next release cycle.",
   "threat_disclaimer": "General industry statistics (Zero Day Clock), not specific to this codebase.",
   "threat_source": "Source: Zero Day Clock (zerodayclock.com) — 83,000+ CVEs tracked",
-  "taint_fix_title": "Fix suggestion",
+  "taint_fix_title": "Generic fix example",
   "taint_fix_before": "Before",
   "taint_fix_after": "After",
   "file_check_why": "Why this was detected",
@@ -4019,5 +4019,23 @@
       "RC": "Recover"
     }
   },
-  "compliance_score": "Compliance Score"
+  "compliance_score": "Compliance Score",
+  "taint_fix_block_title": "To fix",
+  "taint_step_source": "Entry",
+  "taint_step_propagation": "Passes through",
+  "taint_step_sink": "Reaches",
+  "taint_line_to_change": "line to change",
+  "taint_what_to_do": "What to do at {location}:",
+  "taint_variable_origin": "{var} (origin: {kind}) reaches this line unchecked.",
+  "taint_data_origin": "A value (origin: {kind}) reaches this line unchecked.",
+  "taint_false_positive_hint": "False positive? If this value is already checked (fixed list of values, UUID or int type), suppress the finding with 🚫 and report it: it is an engine bug.",
+  "locale_code": "en",
+  "playbook_step_locate": "Locate the vulnerable code pattern in the file",
+  "playbook_step_rerun": "Run the audit again to verify the finding is resolved",
+  "finding_your_code": "Your code — {location}",
+  "finding_detected_line": "Detected line (L{line})",
+  "fix_proposed_title": "Proposed fix",
+  "fix_none": "No automatic fix for this rule: apply the solution above; the generic example shows the idea.",
+  "fix_note_button_submit": "If this button submits a form, write type=\"submit\" instead.",
+  "fix_note_th_row": "If this cell heads a row, write scope=\"row\" instead."
 }

@@ -366,7 +366,15 @@ const ROUTE_DECORATOR_ATTRS: &[&str] = &[
     "websocket",
 ];
 
-const USER_PARAM_SCALARS: &[&str] = &["str", "int", "float", "bool", "bytes", "UUID"];
+/// Annotations of a route parameter that make it an HTTP source.
+///
+/// Deliberate deviation from Python (`_USER_PARAM_SCALARS` of
+/// `sca/dataflow/summary.py`, which also lists `int`, `float`, `bool` and
+/// `UUID`): FastAPI converts those before the handler runs and answers
+/// 422 to anything else, so the value cannot carry a payload into a
+/// query, a command or a page. Keeping them raised every SQLAlchemy call
+/// taking an `id: UUID` as an injection (my-ia report, 2026-11-14).
+const USER_PARAM_SCALARS: &[&str] = &["str", "bytes"];
 
 /// True if the function is a web route handler (recognized
 /// decorator). Detects `@app.get(...)`, `@router.post(...)`,
@@ -405,6 +413,72 @@ fn annotation_scalar_name(ann: Node, source: &[u8]) -> Option<String> {
     }
 }
 
+/// True when the parameter's default is a FastAPI validator
+/// (`Query`, `Path`, `Header`, `Cookie`, `Form`) whose `pattern=` (or the
+/// older `regex=`) only accepts a list of plain words:
+/// `Query("json", pattern="^(json|md|docx)$")`. FastAPI answers 422 to
+/// any other value, so the parameter cannot carry a payload.
+///
+/// Deliberate deviation from Python (`route_source_params` of
+/// `sca/dataflow/summary.py` ignores the default): the six `taint_xss`
+/// of the my-ia exports all came from such a parameter (2026-11-14).
+/// Any other pattern (`^.*$`, a character class) keeps the parameter a
+/// source: only a list of words is provably harmless.
+fn bounded_by_literal_allowlist(ann: Node, source: &[u8]) -> bool {
+    // `ann` is the unwrapped annotation: its parent is the `type`
+    // wrapper, whose parent is the `typed_default_parameter`.
+    let Some(param) = ann
+        .parent()
+        .and_then(|t| if t.kind() == "type" { t.parent() } else { Some(t) })
+        .filter(|p| p.kind() == "typed_default_parameter")
+    else {
+        return false;
+    };
+    let Some(call) = param.child_by_field_name("value").filter(|v| v.kind() == "call") else {
+        return false;
+    };
+    let callee = call
+        .child_by_field_name("function")
+        .map(|f| text(f, source))
+        .unwrap_or_default();
+    let callee = callee.rsplit('.').next().unwrap_or("");
+    if !["Query", "Path", "Header", "Cookie", "Form"].contains(&callee) {
+        return false;
+    }
+    let Some(args) = call.child_by_field_name("arguments") else {
+        return false;
+    };
+    let mut w = args.walk();
+    args.named_children(&mut w).any(|arg| {
+        arg.kind() == "keyword_argument"
+            && arg
+                .child_by_field_name("name")
+                .is_some_and(|n| matches!(text(n, source).as_str(), "pattern" | "regex"))
+            && arg
+                .child_by_field_name("value")
+                .filter(|v| v.kind() == "string")
+                .is_some_and(|v| is_word_list_pattern(&text(v, source)))
+    })
+}
+
+/// True for an anchored regex listing plain words: `^json$`,
+/// `^(json|md|docx)$` (quotes and an `r` prefix accepted).
+fn is_word_list_pattern(literal: &str) -> bool {
+    let s = literal.trim_start_matches(['r', 'R']);
+    let s = s.trim_matches(|c| c == '"' || c == '\'');
+    let Some(inner) = s.strip_prefix('^').and_then(|s| s.strip_suffix('$')) else {
+        return false;
+    };
+    let inner = inner
+        .strip_prefix('(')
+        .and_then(|s| s.strip_suffix(')'))
+        .unwrap_or(inner);
+    let inner = inner.strip_prefix("?:").unwrap_or(inner);
+    inner.split('|').all(|w| {
+        !w.is_empty() && w.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    })
+}
+
 /// Returns the parameters of a route handler to treat as HTTP
 /// sources. Conservative: only parameters annotated with a
 /// user-facing scalar type (`str`, `int`…) are kept — these are
@@ -422,6 +496,7 @@ pub fn route_source_params(fn_info: &FunctionInfo, source: &[u8]) -> Vec<String>
         let Some(ann) = ann else { continue };
         if let Some(ann_name) = annotation_scalar_name(*ann, source)
             && USER_PARAM_SCALARS.contains(&ann_name.as_str())
+            && !bounded_by_literal_allowlist(*ann, source)
         {
             out.push(name.clone());
         }
@@ -440,7 +515,9 @@ pub fn route_source_params(fn_info: &FunctionInfo, source: &[u8]) -> Vec<String>
 /// stay detected intra-procedurally but do not cross a `return`.
 const INTERPROC_BLOCKED_RETURN_KINDS: &[&str] = &["stdin", "cli", "env"];
 
-fn rule_source_kinds(specs: &RuleSpecs) -> Vec<String> {
+/// The source kinds a rule accepts (`kind=` of its `source` lines),
+/// `http` when it declares none.
+pub(crate) fn rule_source_kinds(specs: &RuleSpecs) -> Vec<String> {
     let mut kinds: Vec<String> = specs
         .sources
         .iter()
@@ -964,7 +1041,21 @@ mod tests {
         );
         let fns = collect_functions(tree.root_node(), &src);
         let params = route_source_params(&fns[0], &src);
-        assert_eq!(params, vec!["item_id".to_string(), "q".to_string()]);
+        // `q: int` is converted by FastAPI: not a source (see USER_PARAM_SCALARS).
+        assert_eq!(params, vec!["item_id".to_string()]);
+    }
+
+    #[test]
+    fn test_route_source_params_skip_a_literal_allowlist_pattern() {
+        // FastAPI answers 422 to any value outside the list: `format`
+        // can only be `json`, `md` or `docx` (my-ia exports, 2026-11-14).
+        // A pattern that accepts free text stays a source.
+        let (tree, src) = build(
+            "@router.get('/x')\ndef handler(\n    format: str = Query(\"json\", pattern=\"^(json|md|docx)$\"),\n    lang: str = Query('fr', regex='^fr$'),\n    q: str = Query(None, pattern='^.*$'),\n    name: str = Query(None),\n):\n    pass\n",
+        );
+        let fns = collect_functions(tree.root_node(), &src);
+        let params = route_source_params(&fns[0], &src);
+        assert_eq!(params, vec!["q".to_string(), "name".to_string()]);
     }
 
     #[test]

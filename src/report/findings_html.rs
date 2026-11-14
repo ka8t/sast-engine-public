@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use crate::i18n::t;
 use crate::project::suppress::line_hash;
-use crate::report::exports::sarif::ReportFinding;
+use crate::report::exports::sarif::{ReportFinding, TaintFlow};
 use crate::report::playbook::render_playbook_inline;
 use crate::report::report_assets::load_template;
 use crate::report::text::{escape, is_dependency, lang_label, linkify_acronyms};
@@ -162,10 +162,84 @@ fn render_context_lines(context: &str) -> String {
         .collect()
 }
 
+/// The variable a route-parameter source names: the engine writes it
+/// `handler(param)`. `None` for any other source (a line of code).
+fn source_variable(expr: &str) -> Option<&str> {
+    let inner = expr.strip_suffix(')')?.rsplit_once('(')?.1;
+    (!inner.is_empty() && inner.chars().all(|c| c.is_alphanumeric() || c == '_')).then_some(inner)
+}
+
+/// The "To fix" block of a taint finding: every step of the path with
+/// its file, line and real code, the line to change marked, then what to
+/// do there with the rule's solution, and how to report a false
+/// positive. Added after the my-ia report (2026-11-14): its trace named
+/// the called function as the impact point, never the line of the
+/// query, and its only fix was the rule's generic before/after example,
+/// unrelated to the user's code.
+fn render_fix_block(f: &ReportFinding, flow: &TaintFlow, report_locale: &Value) -> String {
+    let steps: String = flow
+        .steps
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            let (icon, label_key) = match s.kind.as_str() {
+                "source" => ("🟢", "taint_step_source"),
+                "sink" => ("🔴", "taint_step_sink"),
+                _ => ("➡️", "taint_step_propagation"),
+            };
+            let mark = if s.kind == "sink" {
+                format!(
+                    r#" <span class="taint-fix-mark">← {}</span>"#,
+                    t(report_locale, "taint_line_to_change")
+                )
+            } else {
+                String::new()
+            };
+            format!(
+                r#"<li class="taint-fix-step taint-fix-{kind}"><span class="taint-fix-num">{n}.</span> {icon} <strong>{label}</strong> <span class="taint-fix-loc">{file}:{line}</span>{mark}<pre><code>{code}</code></pre></li>"#,
+                kind = escape(&s.kind),
+                n = i + 1,
+                label = t(report_locale, label_key),
+                file = escape(&s.file),
+                line = s.line,
+                code = escape(&s.code),
+            )
+        })
+        .collect();
+    let sink = flow.steps.iter().rev().find(|s| s.kind == "sink");
+    let location = sink.map_or_else(
+        || format!("{}:{}", f.file, f.line),
+        |s| format!("{}:{}", s.file, s.line),
+    );
+    let source_kind = if flow.source_kind.is_empty() {
+        "network"
+    } else {
+        flow.source_kind.as_str()
+    };
+    let kind_label = t(report_locale, &format!("taint_kind_{source_kind}"));
+    let origin = match source_variable(&flow.source_expr) {
+        Some(var) => t(report_locale, "taint_variable_origin")
+            .replace("{var}", &format!("<code>{}</code>", escape(var)))
+            .replace("{kind}", &escape(&kind_label)),
+        None => t(report_locale, "taint_data_origin").replace("{kind}", &escape(&kind_label)),
+    };
+    let solution = f.solution.as_deref().unwrap_or("");
+    format!(
+        r#"<details class="taint-fix-block" open><summary>🛠️ {title}</summary><ol class="taint-fix-steps">{steps}</ol><p class="taint-fix-todo"><strong>{todo}</strong> {origin} {solution}</p><p class="taint-fix-fp">{fp}</p></details>"#,
+        title = t(report_locale, "taint_fix_block_title"),
+        todo = escape(&t(report_locale, "taint_what_to_do").replace("{location}", &location)),
+        solution = escape(solution),
+        fp = escape(&t(report_locale, "taint_false_positive_hint")),
+    )
+}
+
 fn render_taint_trace(f: &ReportFinding, report_locale: &Value) -> String {
     let Some(flow) = &f.taint_flow else {
         return String::new();
     };
+    if !flow.steps.is_empty() {
+        return render_fix_block(f, flow, report_locale);
+    }
     let chain_items: String = flow
         .chain
         .iter()
@@ -194,6 +268,33 @@ fn render_taint_trace(f: &ReportFinding, report_locale: &Value) -> String {
         flow.sink_line,
         escape(&flow.sink_expr),
     )
+}
+
+/// The fix of one finding, written on the user's own line when the rule
+/// has a transform (`fix_proposal`), else a sentence saying there is no
+/// automatic fix. A traced (taint) finding has its own "To fix" block
+/// instead, and a finding without code has nothing to rewrite.
+fn render_fix_proposal(f: &ReportFinding, report_locale: &Value) -> String {
+    if f.taint_flow.is_some() || f.code.trim().is_empty() {
+        return String::new();
+    }
+    match crate::report::fix_proposal::propose_fix(&f.rule_key, &f.code) {
+        Some(fix) => {
+            let note = fix
+                .note_key
+                .map(|k| format!(r#"<p class="fix-proposal-note">{}</p>"#, escape(&t(report_locale, k))))
+                .unwrap_or_default();
+            format!(
+                r#"<div class="fix-proposal"><div class="fix-proposal-title">✅ {}</div><pre><code>{}</code></pre>{note}</div>"#,
+                escape(&t(report_locale, "fix_proposed_title")),
+                escape(&fix.code),
+            )
+        }
+        None => format!(
+            r#"<p class="fix-proposal-none">{}</p>"#,
+            escape(&t(report_locale, "fix_none"))
+        ),
+    }
 }
 
 fn render_finding_item(f: &ReportFinding, severity: &str, report_locale: &Value) -> String {
@@ -227,6 +328,16 @@ fn render_finding_item(f: &ReportFinding, severity: &str, report_locale: &Value)
         "{{context_after_html}}",
         &render_context_lines(&f.context_after),
     );
+    let location = format!("{}:{}", f.file, f.line);
+    item = item.replace(
+        "{{code_label}}",
+        &escape(&t(report_locale, "finding_your_code").replace("{location}", &location)),
+    );
+    item = item.replace(
+        "{{highlight_title}}",
+        &escape(&t(report_locale, "finding_detected_line").replace("{line}", &f.line.to_string())),
+    );
+    item = item.replace("{{fix_html}}", &render_fix_proposal(f, report_locale));
 
     let committer_display = match &f.committer {
         Some(c) if !c.is_empty() => {
@@ -332,7 +443,12 @@ fn render_findings(
                 rk,
                 report_locale,
             ));
-            shared_html.push_str(&render_playbook_inline(rk, report_locale));
+            shared_html.push_str(&render_playbook_inline(
+                rk,
+                report_locale,
+                first.solution.as_deref(),
+                &first.benefit,
+            ));
             shared_html.push_str(&generate_fix_suggestion(rule_catalog, rk, report_locale));
         }
 
@@ -522,6 +638,65 @@ mod tests {
     }
 
     #[test]
+    fn test_render_finding_item_labels_the_code_and_proposes_a_real_fix() {
+        let fr = load_report_locale("fr");
+        let mut f = finding("PERFORMANCE", "fstring_in_logging", "fstring", "app/auth/router.py");
+        f.line = 91;
+        f.code = r#"        logger.error(f"Error for '{username}': {e}")"#.to_string();
+        let html = render_finding_item(&f, "LOW", &fr);
+        assert!(html.contains("Votre code — app/auth/router.py:91"), "{html}");
+        assert!(html.contains("Ligne détectée (L91)"), "{html}");
+        assert!(html.contains("Correction proposée"), "{html}");
+        assert!(
+            html.contains(r#"logger.error(&quot;Error for '%s': %s&quot;, username, e)"#),
+            "{html}"
+        );
+
+        f.rule_key = "xss_unsafe_html_construction".to_string();
+        let html = render_finding_item(&f, "HIGH", &fr);
+        assert!(html.contains("Pas de correction automatique"), "{html}");
+        assert!(!html.contains("Correction proposée"), "{html}");
+    }
+
+    #[test]
+    fn test_render_fix_block_shows_every_step_and_the_line_to_change() {
+        use crate::report::exports::sarif::{TaintFlow, TaintStep};
+        let fr = load_report_locale("fr");
+        let mut f = finding("SECURITY", "taint_sqli", "SQLi", "app/router.py");
+        f.solution = Some("Utilisez des requêtes paramétrées.".to_string());
+        let step = |kind: &str, file: &str, line, code: &str| TaintStep {
+            kind: kind.to_string(),
+            file: file.to_string(),
+            line,
+            code: code.to_string(),
+        };
+        f.taint_flow = Some(TaintFlow {
+            rule_key: "taint_sqli".to_string(),
+            source_file: "app/router.py".to_string(),
+            source_line: 12,
+            source_expr: "list_calls(name)".to_string(),
+            chain: vec![],
+            sink_file: "app/router.py".to_string(),
+            sink_line: 13,
+            sink_expr: "_rows(...)".to_string(),
+            source_kind: "http".to_string(),
+            steps: vec![
+                step("source", "app/router.py", 12, "async def list_calls(name: str):"),
+                step("propagation", "app/router.py", 13, "return await _rows(db, name)"),
+                step("sink", "app/journal.py", 6, "return await db.execute(query)"),
+            ],
+        });
+        let html = render_taint_trace(&f, &fr);
+        assert!(html.contains("app/journal.py:6"), "{html}");
+        assert!(html.contains("return await db.execute(query)"));
+        assert!(html.contains(&t(&fr, "taint_line_to_change")));
+        assert!(html.contains("Que faire à app/journal.py:6"));
+        assert!(html.contains("<code>name</code>"));
+        assert!(html.contains("Utilisez des requêtes paramétrées."));
+        assert!(!html.contains("taint-source"), "old trace replaced");
+    }
+
+    #[test]
     fn test_render_taint_trace_uses_real_source_kind() {
         use crate::report::exports::sarif::TaintFlow;
         let en = load_report_locale("en");
@@ -536,6 +711,7 @@ mod tests {
             sink_line: 10,
             sink_expr: "os.system(cmd)".to_string(),
             source_kind: "http".to_string(),
+            steps: vec![],
         });
         let html = render_taint_trace(&f, &en);
         assert!(html.contains(&t(&en, "taint_kind_http")));
@@ -556,6 +732,7 @@ mod tests {
             sink_line: 10,
             sink_expr: "y".to_string(),
             source_kind: String::new(),
+            steps: vec![],
         });
         let html = render_taint_trace(&f, &en);
         assert!(html.contains(&t(&en, "taint_kind_network")));

@@ -711,7 +711,7 @@
       "benefit": "Elimina el riesgo de inyección de entorno introducido por la API obsoleta de comandos workflow."
     },
     "gha_artifact_poisoning": {
-      "name": "Envenenamiento de artefacto via workflow_run",
+      "name": "Envenenamiento de artefacto vía workflow_run",
       "risk": "Descargar artefactos en un contexto workflow_run sin verificación de integridad permite el envenenamiento si el workflow fuente está comprometido.",
       "solution": "Verificar la integridad de artefactos con checksums tras la descarga, o restringir el workflow disparador a refs confiables.",
       "benefit": "Previene ataques de supply chain mediante artefactos maliciosos inyectados en el pipeline CI/CD."
@@ -825,9 +825,9 @@
       "benefit": "Detecta posibles reverse shells y canales de exfiltración en scripts de pipeline CI/CD."
     },
     "gha_secrets_bypass_redaction": {
-      "name": "Bypass de redacción de secretos via JSON",
+      "name": "Bypass de redacción de secretos vía JSON",
       "risk": "toJSON(secrets) o fromJSON(secrets.*) bypasea la redacción automática de logs de GitHub, haciendo que los valores de secretos aparezcan en texto plano.",
-      "solution": "Evitar fromJSON/toJSON con el contexto secrets. Acceder a secretos individuales directamente via ${{ secrets.MY_SECRET }}.",
+      "solution": "Evitar fromJSON/toJSON con el contexto secrets. Acceder a secretos individuales directamente vía ${{ secrets.MY_SECRET }}.",
       "benefit": "Garantiza que los valores de secretos permanezcan redactados en los logs CI/CD incluso en expresiones complejas."
     },
     "gha_actor_check_bypass": {
@@ -1305,122 +1305,122 @@
       "benefit": "Prevención de inyección SQL en consultas TypeORM (OWASP A03, CWE-89)."
     },
     "ssrf_python": {
-      "name": "Falsificacion de solicitud del servidor (Python)",
+      "name": "Falsificación de solicitud del servidor (Python)",
       "risk": "Solicitudes HTTP con URLs controladas por el usuario permiten acceder a servicios internos (OWASP A10, CWE-918).",
       "solution": "Validar y restringir las URLs/dominios permitidos. Bloquear rangos IP privados.",
-      "benefit": "Prevencion de ataques SSRF contra la infraestructura interna."
+      "benefit": "Prevención de ataques SSRF contra la infraestructura interna."
     },
     "ssrf_java": {
-      "name": "Falsificacion de solicitud del servidor (Java)",
+      "name": "Falsificación de solicitud del servidor (Java)",
       "risk": "Conexiones URL con entrada de usuario permiten sondear servicios internos (OWASP A10, CWE-918).",
       "solution": "Validar URLs contra una lista blanca. Usar java.net.URI para verificar el hostname.",
-      "benefit": "Prevencion de ataques SSRF en aplicaciones Java."
+      "benefit": "Prevención de ataques SSRF en aplicaciones Java."
     },
     "ssrf_csharp": {
-      "name": "Falsificacion de solicitud del servidor (C#)",
+      "name": "Falsificación de solicitud del servidor (C#)",
       "risk": "Solicitudes HttpClient con URLs controladas permiten ataques SSRF (OWASP A10, CWE-918).",
       "solution": "Validar y restringir URLs. Usar Uri.TryCreate() para verificar el hostname.",
-      "benefit": "Prevencion de ataques SSRF en aplicaciones .NET."
+      "benefit": "Prevención de ataques SSRF en aplicaciones .NET."
     },
     "ssrf_php": {
-      "name": "Falsificacion de solicitud del servidor (PHP)",
+      "name": "Falsificación de solicitud del servidor (PHP)",
       "risk": "file_get_contents()/curl con URLs controladas permiten ataques SSRF (OWASP A10, CWE-918).",
       "solution": "Validar URLs contra una lista blanca. Usar parse_url() y bloquear IPs privadas.",
-      "benefit": "Prevencion de ataques SSRF en aplicaciones PHP."
+      "benefit": "Prevención de ataques SSRF en aplicaciones PHP."
     },
     "ssrf_javascript": {
-      "name": "Falsificacion de solicitud del servidor (JavaScript)",
+      "name": "Falsificación de solicitud del servidor (JavaScript)",
       "risk": "fetch()/axios con URLs controladas permiten ataques SSRF (OWASP A10, CWE-918).",
       "solution": "Validar y restringir URLs/dominios permitidos antes de realizar solicitudes HTTP.",
-      "benefit": "Prevencion de ataques SSRF en aplicaciones Node.js."
+      "benefit": "Prevención de ataques SSRF en aplicaciones Node.js."
     },
     "path_traversal_python": {
       "name": "Recorrido de directorios (Python)",
       "risk": "Rutas de archivo controladas por el usuario permiten leer/escribir archivos arbitrarios (CWE-22, OWASP A01).",
       "solution": "Validar rutas con os.path.realpath() y verificar que permanezcan en el directorio permitido.",
-      "benefit": "Prevencion del recorrido de directorios y acceso no autorizado a archivos."
+      "benefit": "Prevención del recorrido de directorios y acceso no autorizado a archivos."
     },
     "path_traversal_java": {
       "name": "Recorrido de directorios (Java)",
       "risk": "Operaciones de archivo con rutas controladas permiten ataques de recorrido (CWE-22, OWASP A01).",
       "solution": "Usar Path.normalize().startsWith(basePath) para validar las rutas resueltas.",
-      "benefit": "Prevencion de ataques de recorrido de directorios en aplicaciones Java."
+      "benefit": "Prevención de ataques de recorrido de directorios en aplicaciones Java."
     },
     "path_traversal_csharp": {
       "name": "Recorrido de directorios (C#)",
       "risk": "File.Read/Write con rutas controladas permiten ataques de recorrido (CWE-22, OWASP A01).",
       "solution": "Usar Path.GetFullPath() y verificar que la ruta resuelta comience por el directorio permitido.",
-      "benefit": "Prevencion de ataques de recorrido de directorios en aplicaciones .NET."
+      "benefit": "Prevención de ataques de recorrido de directorios en aplicaciones .NET."
     },
     "path_traversal_javascript": {
       "name": "Recorrido de directorios (JavaScript)",
       "risk": "Operaciones fs con rutas controladas permiten ataques de recorrido (CWE-22, OWASP A01).",
       "solution": "Usar path.resolve() y verificar que el resultado comience por el directorio permitido.",
-      "benefit": "Prevencion de ataques de recorrido de directorios en aplicaciones Node.js."
+      "benefit": "Prevención de ataques de recorrido de directorios en aplicaciones Node.js."
     },
     "django_csrf_exempt": {
       "name": "Decorador @csrf_exempt (Django)",
-      "risk": "Deshabilitar la proteccion CSRF expone los endpoints a ataques cross-site request forgery (CWE-352, OWASP A01).",
-      "solution": "Eliminar @csrf_exempt y usar el middleware CSRF de Django. Para APIs, usar autenticacion por token.",
-      "benefit": "Proteccion CSRF completa en todos los endpoints."
+      "risk": "Deshabilitar la protección CSRF expone los endpoints a ataques cross-site request forgery (CWE-352, OWASP A01).",
+      "solution": "Eliminar @csrf_exempt y usar el middleware CSRF de Django. Para APIs, usar autenticación por token.",
+      "benefit": "Protección CSRF completa en todos los endpoints."
     },
     "django_debug_enabled": {
       "name": "DEBUG = True (Django)",
-      "risk": "El modo debug en produccion expone stack traces, consultas SQL y configuracion sensible (CWE-489, OWASP A05).",
-      "solution": "Definir DEBUG = False en produccion. Usar variables de entorno: DEBUG = os.environ.get('DEBUG', 'False') == 'True'.",
-      "benefit": "Sin fuga de informacion sensible en produccion."
+      "risk": "El modo debug en producción expone stack traces, consultas SQL y configuración sensible (CWE-489, OWASP A05).",
+      "solution": "Definir DEBUG = False en producción. Usar variables de entorno: DEBUG = os.environ.get('DEBUG', 'False') == 'True'.",
+      "benefit": "Sin fuga de información sensible en producción."
     },
     "django_secret_key_weak": {
       "name": "SECRET_KEY embebida (Django)",
-      "risk": "Una SECRET_KEY codificada o debil compromete la firma de sesiones, tokens CSRF y restablecimiento de contrasenas (CWE-798, OWASP A02).",
+      "risk": "Una SECRET_KEY codificada o débil compromete la firma de sesiones, tokens CSRF y restablecimiento de contraseñas (CWE-798, OWASP A02).",
       "solution": "Cargar desde variable de entorno: SECRET_KEY = os.environ['DJANGO_SECRET_KEY']. Generar con get_random_secret_key().",
-      "benefit": "Clave secreta criptograficamente fuerte y no divulgada."
+      "benefit": "Clave secreta criptográficamente fuerte y no divulgada."
     },
     "flask_debug_enabled": {
       "name": "Modo debug activado (Flask)",
-      "risk": "El modo debug de Flask activa el depurador Werkzeug, permitiendo ejecucion remota de codigo (CWE-489, OWASP A05).",
-      "solution": "Nunca usar debug=True en produccion. Usar variable de entorno.",
-      "benefit": "Sin depurador interactivo expuesto en produccion."
+      "risk": "El modo debug de Flask activa el depurador Werkzeug, permitiendo ejecución remota de código (CWE-489, OWASP A05).",
+      "solution": "Nunca usar debug=True en producción. Usar variable de entorno.",
+      "benefit": "Sin depurador interactivo expuesto en producción."
     },
     "flask_secret_key_weak": {
       "name": "secret_key embebida (Flask)",
-      "risk": "Una secret_key codificada compromete las cookies de sesion y la proteccion CSRF (CWE-798, OWASP A02).",
+      "risk": "Una secret_key codificada compromete las cookies de sesión y la protección CSRF (CWE-798, OWASP A02).",
       "solution": "Cargar desde el entorno: app.secret_key = os.environ['FLASK_SECRET_KEY']. Generar con os.urandom(32).hex().",
-      "benefit": "Clave secreta criptograficamente fuerte y no divulgada."
+      "benefit": "Clave secreta criptográficamente fuerte y no divulgada."
     },
     "express_no_helmet": {
       "name": "Middleware Helmet faltante (Express)",
       "risk": "Sin Helmet, las apps Express carecen de cabeceras de seguridad (X-Content-Type-Options, Strict-Transport-Security, etc.) (OWASP A05).",
       "solution": "Instalar y usar Helmet: npm install helmet, luego app.use(helmet()).",
-      "benefit": "Cabeceras de seguridad definidas automaticamente en todas las respuestas."
+      "benefit": "Cabeceras de seguridad definidas automáticamente en todas las respuestas."
     },
     "express_cors_wildcard": {
-      "name": "Configuracion CORS permisiva (Express)",
-      "risk": "cors() sin restriccion de origen o origin: '*' permite a cualquier sitio realizar peticiones autenticadas (CWE-942, OWASP A01).",
-      "solution": "Configurar origenes especificos: cors({ origin: ['https://sudominio.com'] }).",
+      "name": "Configuración CORS permisiva (Express)",
+      "risk": "cors() sin restricción de origen o origin: '*' permite a cualquier sitio realizar peticiones autenticadas (CWE-942, OWASP A01).",
+      "solution": "Configurar orígenes específicos: cors({ origin: ['https://sudominio.com'] }).",
       "benefit": "Peticiones cross-origin restringidas a dominios de confianza."
     },
     "insecure_cookie": {
       "name": "Cookie insegura (HttpOnly/Secure faltante)",
-      "risk": "Las cookies sin HttpOnly son accesibles via JavaScript (XSS). Sin Secure se envian por HTTP no cifrado (CWE-614, OWASP A05).",
-      "solution": "Siempre definir HttpOnly=True y Secure=True en cookies de sesion y autenticacion.",
-      "benefit": "Cookies protegidas contra robo por XSS e intercepcion de red."
+      "risk": "Las cookies sin HttpOnly son accesibles vía JavaScript (XSS). Sin Secure se envian por HTTP no cifrado (CWE-614, OWASP A05).",
+      "solution": "Siempre definir HttpOnly=True y Secure=True en cookies de sesión y autenticación.",
+      "benefit": "Cookies protegidas contra robo por XSS e intercepción de red."
     },
     "insecure_cookie_no_secure": {
       "name": "Cookie sin flag Secure",
-      "risk": "Las cookies con secure=False se transmiten por HTTP no cifrado, permitiendo la intercepcion (CWE-614, OWASP A05).",
+      "risk": "Las cookies con secure=False se transmiten por HTTP no cifrado, permitiendo la intercepción (CWE-614, OWASP A05).",
       "solution": "Definir secure=True en todas las cookies con datos sensibles.",
-      "benefit": "Cookie solo enviada por HTTPS, evitando la intercepcion de red."
+      "benefit": "Cookie solo enviada por HTTPS, evitando la intercepción de red."
     },
     "ldap_injection_python": {
-      "name": "Inyeccion LDAP (Python)",
-      "risk": "La concatenacion en filtros LDAP permite a los atacantes modificar consultas y eludir la autenticacion (CWE-90, OWASP A03).",
+      "name": "Inyección LDAP (Python)",
+      "risk": "La concatenación en filtros LDAP permite a los atacantes modificar consultas y eludir la autenticación (CWE-90, OWASP A03).",
       "solution": "Usar filtros LDAP parametrizados con ldap.filter.filter_format() o escapar con ldap.filter.escape_filter_chars().",
       "benefit": "Consultas LDAP protegidas contra inyecciones."
     },
     "ldap_injection_java": {
-      "name": "Inyeccion LDAP (Java)",
-      "risk": "La concatenacion en filtros de busqueda LDAP permite manipulacion de consultas y evasion de autenticacion (CWE-90, OWASP A03).",
+      "name": "Inyección LDAP (Java)",
+      "risk": "La concatenación en filtros de búsqueda LDAP permite manipulación de consultas y evasión de autenticación (CWE-90, OWASP A03).",
       "solution": "Usar busquedas parametrizadas con SearchControls o escapar con LdapEncoder.filterEncode().",
       "benefit": "Consultas LDAP protegidas contra inyecciones."
     },
@@ -1775,7 +1775,7 @@
     "missing_csp_header": {
       "name": "Content-Security-Policy ausente",
       "risk": "Aplicación web sin encabezado Content-Security-Policy vulnerable a XSS, clickjacking y ataques de inyección de datos (CWE-1021).",
-      "solution": "Agregar encabezados CSP via flask-talisman (Flask), django-csp (Django), o helmet (Express).",
+      "solution": "Agregar encabezados CSP vía flask-talisman (Flask), django-csp (Django), o helmet (Express).",
       "benefit": "Defensa en profundidad contra XSS, impacto reducido de vulnerabilidades de inyección, política de seguridad aplicada por el navegador."
     },
     "exposed_test_endpoint": {
@@ -1786,15 +1786,15 @@
     },
     "missing_health_check": {
       "name": "Endpoint de salud ausente",
-      "risk": "Aplicacion con rutas API pero sin endpoint de salud (/health, /readiness, /ping) — los balanceadores de carga no pueden verificar la disponibilidad del servicio, reduciendo la efectividad de la redundancia (ISO A.8.14).",
-      "solution": "Agregar un endpoint /health o /readiness que retorne el estado del servicio. Integrar con health checks del balanceador y probes de orquestacion.",
-      "benefit": "Conmutacion automatica, monitoreo de salud por el balanceador de carga y probes liveness/readiness para orquestacion de contenedores."
+      "risk": "Aplicación con rutas API pero sin endpoint de salud (/health, /readiness, /ping) — los balanceadores de carga no pueden verificar la disponibilidad del servicio, reduciendo la efectividad de la redundancia (ISO A.8.14).",
+      "solution": "Agregar un endpoint /health o /readiness que retorne el estado del servicio. Integrar con health checks del balanceador y probes de orquestación.",
+      "benefit": "Conmutación automática, monitoreo de salud por el balanceador de carga y probes liveness/readiness para orquestación de contenedores."
     },
     "unreviewed_vendor_code": {
-      "name": "Codigo de proveedor no auditado",
-      "risk": "Directorio de codigo de terceros sin archivo LICENSE, NOTICE o documentacion de revision de seguridad — el codigo externalizado puede contener vulnerabilidades, puertas traseras o violaciones de licencia (ISO A.8.30).",
-      "solution": "Agregar archivos LICENSE y SECURITY_REVIEW a los directorios vendor. Realizar revision de seguridad de todo codigo de terceros antes de la integracion.",
-      "benefit": "Cadena de suministro controlada, procedencia del codigo de proveedor documentada, riesgo reducido de vulnerabilidades no descubiertas."
+      "name": "Código de proveedor no auditado",
+      "risk": "Directorio de código de terceros sin archivo LICENSE, NOTICE o documentación de revisión de seguridad — el código externalizado puede contener vulnerabilidades, puertas traseras o violaciones de licencia (ISO A.8.30).",
+      "solution": "Agregar archivos LICENSE y SECURITY_REVIEW a los directorios vendor. Realizar revisión de seguridad de todo código de terceros antes de la integración.",
+      "benefit": "Cadena de suministro controlada, procedencia del código de proveedor documentada, riesgo reducido de vulnerabilidades no descubiertas."
     },
     "jndi_injection_java": {
       "name": "Inyección JNDI (Log4Shell)",
@@ -1985,7 +1985,7 @@
       "benefit": "Conexiones HTTPS verificadas."
     },
     "os_system_injection": {
-      "name": "Ejecución shell via os.system/popen",
+      "name": "Ejecución shell vía os.system/popen",
       "risk": "os.system() y os.popen() ejecutan comandos shell vulnerables a inyección (CWE-78).",
       "solution": "Usar subprocess.run() con shell=False.",
       "benefit": "Protección contra inyección de comandos."
@@ -2046,7 +2046,7 @@
     },
     "regex_dos": {
       "name": "ReDoS — unsafe regex",
-      "risk": "A regex built from user data can cause denial of service via exponential backtracking (CWE-1333).",
+      "risk": "A regex built from user data can cause denial of service vía exponential backtracking (CWE-1333).",
       "solution": "Never build regex from user data. Use safe-regex or re2.",
       "benefit": "Protection against regex-based denial of service."
     },
@@ -2054,7 +2054,7 @@
       "name": "Open redirect",
       "risk": "res.redirect() with user-controlled URL allows redirection to malicious sites (CWE-601).",
       "solution": "Validate redirect URL against an allowlist of authorized paths.",
-      "benefit": "Protection against phishing via redirect."
+      "benefit": "Protection against phishing vía redirect."
     },
     "jwt_weak_secret": {
       "name": "JWT weak secret",
@@ -2144,13 +2144,13 @@
       "name": "Data URI with HTML content",
       "risk": "data:text/html allows injecting executable HTML/JS in an iframe or image (CWE-79).",
       "solution": "Forbid data: URIs with text/html. Validate and sanitize sources.",
-      "benefit": "Protection against HTML injection via data URIs."
+      "benefit": "Protection against HTML injection vía data URIs."
     },
     "data_uri_html_tag": {
       "name": "Data URI HTML in tag",
       "risk": "src/href with data:text/html loads executable HTML content directly in the browser (CWE-79).",
       "solution": "Forbid data:text/html in src and href attributes.",
-      "benefit": "XSS protection via HTML tags."
+      "benefit": "XSS protection vía HTML tags."
     },
     "inline_event_handler": {
       "name": "Inline event handler",
@@ -2274,7 +2274,7 @@
     },
     "html_video_missing_captions": {
       "name": "Vídeo sin pista de subtítulos",
-      "risk": "Un elemento de video sin pista de subtítulos (<track kind=\"captions\">) hace el contenido inaccesible para usuarios sordos y con problemas de audición.",
+      "risk": "Un elemento de vídeo sin pista de subtítulos (<track kind=\"captions\">) hace el contenido inaccesible para usuarios sordos y con problemas de audición.",
       "solution": "Añadir un elemento <track kind=\"captions\"> dentro de la etiqueta <video> apuntando a un archivo de subtítulos WebVTT (.vtt) o SRT.",
       "benefit": "Conformidad con WCAG 1.2.2 — Subtítulos (pregrabados) — todos los medios sincronizados tienen subtítulos para usuarios sordos y con problemas de audición."
     },
@@ -2351,7 +2351,7 @@
       "benefit": "Manejo adecuado de errores previene crashes y fugas de información."
     },
     "path_traversal_os_join": {
-      "name": "Path traversal via os.path.join",
+      "name": "Path traversal vía os.path.join",
       "risk": "os.path.join con entrada del usuario permite recorrido de directorios (../) para acceder a archivos arbitrarios.",
       "solution": "Valide las rutas: use os.path.realpath() y verifique que el resultado esté dentro del directorio permitido.",
       "benefit": "Previene el acceso no autorizado al sistema de archivos."
@@ -2432,277 +2432,277 @@
       "name": "Clave API en URL",
       "risk": "Las claves API en URLs son registradas por servidores web, proxies y navegadores (CWE-598).",
       "solution": "Enviar las claves API en el header Authorization, nunca en la URL.",
-      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicacion."
+      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicación."
     },
     "cache_poisoning": {
       "name": "Envenenamiento de caché",
-      "risk": "X-Forwarded-Host y headers similares, si se usan sin validacion, permiten el envenenamiento de cache. Una sola respuesta envenenada sirve contenido malicioso a todos los usuarios (CWE-444).",
+      "risk": "X-Forwarded-Host y headers similares, si se usan sin validación, permiten el envenenamiento de cache. Una sola respuesta envenenada sirve contenido malicioso a todos los usuarios (CWE-444).",
       "solution": "Validar X-Forwarded-Host contra ALLOWED_HOSTS. Usar headers Vary. Configurar el CDN para no cachear respuestas con headers no reconocidos.",
-      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicacion."
+      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicación."
     },
     "command_injection_java_broad": {
       "name": "Inyección de comando (Java)",
-      "risk": "Comando de sistema ejecutado en un archivo que contiene parametros HTTP — posible inyeccion de comandos (CWE-78).",
+      "risk": "Comando de sistema ejecutado en un archivo que contiene parámetros HTTP — posible inyección de comandos (CWE-78).",
       "solution": "Evitar pasar entrada de usuario a comandos de sistema. Usar APIs parametrizadas.",
-      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicacion."
+      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicación."
     },
     "dependency_confusion": {
       "name": "Confusión de dependencia",
-      "risk": "Si un nombre de paquete interno existe en npm publico, un atacante puede publicar una version maliciosa (CWE-427).",
+      "risk": "Si un nombre de paquete interno existe en npm publico, un atacante puede publicar una versión maliciosa (CWE-427).",
       "solution": "Usar paquetes con scope npm (@company/pkg). Configurar .npmrc con el registry para su scope.",
-      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicacion."
+      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicación."
     },
     "dom_clobbering": {
       "name": "DOM Clobbering",
-      "risk": "Elementos nombrados location, document, etc. sobrescriben propiedades globales de JavaScript, permitiendo XSS o evasion de logica (CWE-79).",
+      "risk": "Elementos nombrados location, document, etc. sobrescriben propiedades globales de JavaScript, permitiendo XSS o evasión de lógica (CWE-79).",
       "solution": "Evitar usar nombres de propiedades globales de JavaScript como atributos id o name de elementos HTML.",
-      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicacion."
+      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicación."
     },
     "fstring_in_logging": {
       "name": "F-string en logging",
-      "risk": "Los f-strings en logging se ejecutan incluso cuando el nivel de log esta desactivado (rendimiento). Tambien eluden la sanitizacion contra inyeccion de logs (CWE-117).",
+      "risk": "Los f-strings en logging se ejecutan incluso cuando el nivel de log esta desactivado (rendimiento). También eluden la sanitización contra inyección de logs (CWE-117).",
       "solution": "Usar logger.info(\"User %s logged in\", username) en lugar de logger.info(f\"User {username} logged in\").",
       "benefit": "Mejora el rendimiento del logging y mantiene el formateo lazy y coherente."
     },
     "graphql_batching_attack": {
       "name": "Ataque batch GraphQL",
-      "risk": "Un atacante puede enviar miles de operaciones en una sola solicitud batch, causando DoS o fuerza bruta de autenticacion (CWE-770).",
-      "solution": "Desactivar el batching o limitar su tamanio. Agregar analisis de costo de consultas y limitacion de tasa.",
-      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicacion."
+      "risk": "Un atacante puede enviar miles de operaciones en una sola solicitud batch, causando DoS o fuerza bruta de autenticación (CWE-770).",
+      "solution": "Desactivar el batching o limitar su tamanio. Agregar análisis de costo de consultas y limitación de tasa.",
+      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicación."
     },
     "hardcoded_iv_nonce": {
       "name": "IV/Nonce codificado",
-      "risk": "Un IV fijo hace que los datos cifrados sean predecibles. Textos identicos producen cifrados identicos, revelando patrones (CWE-329).",
+      "risk": "Un IV fijo hace que los datos cifrados sean predecibles. Textos idénticos producen cifrados idénticos, revelando patrones (CWE-329).",
       "solution": "Usar os.urandom(16) o secrets.token_bytes(16) para generar un IV nuevo por cifrado.",
-      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicacion."
+      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicación."
     },
     "idor_missing_ownership": {
       "name": "IDOR sin verificación",
-      "risk": "Los usuarios pueden acceder o modificar datos de otros usuarios cambiando el parametro ID. La vulnerabilidad API mas comun (CWE-639).",
+      "risk": "Los usuarios pueden acceder o modificar datos de otros usuarios cambiando el parámetro ID. La vulnerabilidad API mas común (CWE-639).",
       "solution": "Siempre filtrar por usuario actual: Model.objects.filter(pk=id, user=request.user). Usar permisos a nivel de objeto.",
-      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicacion."
+      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicación."
     },
     "insecure_cookie_flag": {
       "name": "Flag Secure desactivado",
       "risk": "Cookie con flag Secure en false se transmite por conexiones HTTP no cifradas (CWE-614).",
       "solution": "Establecer cookie.setSecure(true) para que las cookies solo se envien por HTTPS.",
-      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicacion."
+      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicación."
     },
     "ldap_injection_java_broad": {
       "name": "Inyección LDAP (Java)",
-      "risk": "Consulta LDAP ejecutada en un archivo que contiene parametros HTTP — posible inyeccion LDAP (CWE-90).",
+      "risk": "Consulta LDAP ejecutada en un archivo que contiene parámetros HTTP — posible inyección LDAP (CWE-90).",
       "solution": "Usar consultas LDAP parametrizadas o escapar caracteres especiales.",
-      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicacion."
+      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicación."
     },
     "llm_output_to_sink": {
       "name": "Salida LLM hacia sink",
-      "risk": "La salida del LLM no es confiable. Si se pasa a SQL, shell u operaciones de archivo, un atacante puede usar inyeccion de prompt para lograr RCE/SQLi (CWE-74).",
+      "risk": "La salida del LLM no es confiable. Si se pasa a SQL, shell u operaciones de archivo, un atacante puede usar inyección de prompt para lograr RCE/SQLi (CWE-74).",
       "solution": "Validar y sanear la salida del LLM antes de usarla en consultas, comandos u operaciones de archivo. Nunca confiar en la salida del LLM.",
-      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicacion."
+      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicación."
     },
     "log4shell_jndi": {
       "name": "Log4Shell (JNDI)",
-      "risk": "Las busquedas JNDI en mensajes de log permiten ejecucion remota de codigo via Log4j (CVE-2021-44228). Incluso en archivos de test/config es una alerta.",
+      "risk": "Las busquedas JNDI en mensajes de log permiten ejecución remota de código vía Log4j (CVE-2021-44228). Incluso en archivos de test/config es una alerta.",
       "solution": "Actualizar Log4j a 2.17+. Configurar log4j2.formatMsgNoLookups=true. Eliminar todos los patrones JNDI.",
-      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicacion."
+      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicación."
     },
     "missing_pkce_oauth": {
       "name": "PKCE faltante (OAuth)",
-      "risk": "Sin PKCE, el codigo de autorizacion OAuth puede ser robado por una app maliciosa o extension del navegador (CWE-345).",
-      "solution": "Implementar PKCE (RFC 7636). Generar code_verifier y code_challenge para cada solicitud de autorizacion.",
-      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicacion."
+      "risk": "Sin PKCE, el código de autorización OAuth puede ser robado por una app maliciosa o extensión del navegador (CWE-345).",
+      "solution": "Implementar PKCE (RFC 7636). Generar code_verifier y code_challenge para cada solicitud de autorización.",
+      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicación."
     },
     "missing_session_timeout": {
       "name": "Timeout de sesión faltante",
-      "risk": "Las sesiones sin expiracion permiten el uso indefinido de tokens de sesion robados (CWE-613).",
-      "solution": "Configurar SESSION_COOKIE_AGE (Django) o permanent_session_lifetime (Flask) para limitar la duracion de sesion.",
-      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicacion."
+      "risk": "Las sesiones sin expiración permiten el uso indefinido de tokens de sesión robados (CWE-613).",
+      "solution": "Configurar SESSION_COOKIE_AGE (Django) o permanent_session_lifetime (Flask) para limitar la duración de sesión.",
+      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicación."
     },
     "oauth_open_redirect": {
       "name": "Redirección abierta OAuth",
       "risk": "Un atacante puede robar tokens OAuth redirigiendo a un sitio malicioso (CWE-601).",
       "solution": "Validar redirect_uri contra una lista blanca de URLs autorizadas registradas en el proveedor OAuth.",
-      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicacion."
+      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicación."
     },
     "path_traversal_fis": {
       "name": "Traversal de ruta (FileInputStream)",
       "risk": "FileInputStream con ruta controlada por el usuario permite recorrido de directorios (CWE-22).",
       "solution": "Validar y canonicalizar las rutas. Usar Path.normalize().startsWith(basePath).",
-      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicacion."
+      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicación."
     },
     "pii_in_url": {
       "name": "Datos personales en URL",
-      "risk": "Los datos personales en URLs son registrados por servidores, proxies, CDN e historial del navegador. Riesgo de violacion RGPD (CWE-598).",
+      "risk": "Los datos personales en URLs son registrados por servidores, proxies, CDN e historial del navegador. Riesgo de violación RGPD (CWE-598).",
       "solution": "Usar el cuerpo de la solicitud (POST) o identificadores opacos en lugar de PII en las URLs.",
-      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicacion."
+      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicación."
     },
     "prompt_injection_llm": {
       "name": "Inyección de prompt (LLM)",
       "risk": "Un atacante puede manipular el LLM para filtrar datos, evadir instrucciones o ejecutar acciones no previstas.",
       "solution": "Sanear la entrada de usuario antes de enviarla al LLM. Usar system prompts con limites estrictos.",
-      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicacion."
+      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicación."
     },
     "race_condition_financial": {
       "name": "Condición de carrera (financiero)",
       "risk": "Las solicitudes concurrentes pueden causar doble gasto, saldos negativos o sobreventa de inventario (CWE-362).",
       "solution": "Usar select_for_update(), expresiones F(), o transaction.atomic() con bloqueos a nivel de base de datos.",
-      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicacion."
+      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicación."
     },
     "razor_html_raw": {
       "name": "XSS vía Html.Raw()",
-      "risk": "Html.Raw() desactiva el codificado HTML automatico de Razor. Si el contenido incluye datos de usuario, el XSS es posible (CWE-79).",
+      "risk": "Html.Raw() desactiva el codificado HTML automático de Razor. Si el contenido incluye datos de usuario, el XSS es posible (CWE-79).",
       "solution": "Usar @Model.Property (auto-codificado) o Html.Encode(). Usar Html.Raw() solo con contenido fiable y pre-saneado.",
-      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicacion."
+      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicación."
     },
     "service_worker_hijack": {
       "name": "Secuestro de Service Worker",
-      "risk": "Un Service Worker con scope raiz (/) intercepta TODAS las solicitudes. Si es posible un XSS, el atacante controla todo el trafico de red permanentemente (CWE-349).",
+      "risk": "Un Service Worker con scope raíz (/) intercepta TODAS las solicitudes. Si es posible un XSS, el atacante controla todo el tráfico de red permanentemente (CWE-349).",
       "solution": "Registrar Service Workers con el scope mas estrecho posible. Usar Content-Security-Policy para restringir las fuentes.",
-      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicacion."
+      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicación."
     },
     "spring_actuator_exposed": {
       "name": "Spring Actuator expuesto",
-      "risk": "/actuator/env expone toda la configuracion incluyendo secretos. /actuator/heapdump puede filtrar credenciales desde la memoria (CWE-215).",
-      "solution": "Restringir a health e info unicamente. Exigir autenticacion para todos los endpoints de actuator.",
-      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicacion."
+      "risk": "/actuator/env expone toda la configuración incluyendo secretos. /actuator/heapdump puede filtrar credenciales desde la memoria (CWE-215).",
+      "solution": "Restringir a health e info únicamente. Exigir autenticación para todos los endpoints de actuator.",
+      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicación."
     },
     "sql_injection_java_broad": {
       "name": "Inyección SQL (Java)",
-      "risk": "Consulta SQL ejecutada en un archivo que contiene parametros HTTP — posible inyeccion SQL (CWE-89).",
-      "solution": "Usar consultas parametrizadas con PreparedStatement y parametros enlazados.",
-      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicacion."
+      "risk": "Consulta SQL ejecutada en un archivo que contiene parámetros HTTP — posible inyección SQL (CWE-89).",
+      "solution": "Usar consultas parametrizadas con PreparedStatement y parámetros enlazados.",
+      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicación."
     },
     "ssrf": {
       "name": "SSRF (genérico)",
-      "risk": "Un atacante puede hacer que el servidor envie solicitudes HTTP a URLs arbitrarias, incluyendo servicios internos.",
+      "risk": "Un atacante puede hacer que el servidor envíe solicitudes HTTP a URLs arbitrarias, incluyendo servicios internos.",
       "solution": "Validar y restringir las URLs/dominios permitidos antes de realizar solicitudes salientes.",
-      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicacion."
+      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicación."
     },
     "ssrf_pdf_generation": {
       "name": "SSRF vía generación PDF",
       "risk": "Los generadores PDF como wkhtmltopdf, WeasyPrint y Puppeteer realizan solicitudes HTTP a la URL proporcionada. Un atacante puede apuntar a servicios internos (CWE-918).",
       "solution": "Validar URLs contra una lista blanca. Bloquear rangos de IP privadas (10.x, 172.16-31.x, 192.168.x, 127.x).",
-      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicacion."
+      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicación."
     },
     "taint_codeinj": {
       "name": "Inyección de código (taint)",
-      "risk": "Un atacante puede ejecutar codigo Python arbitrario en el servidor.",
-      "solution": "Reemplazar la ejecucion dinamica por ast.literal_eval() para el analisis de datos, o usar una lista blanca de operaciones permitidas.",
-      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicacion."
+      "risk": "Un atacante puede ejecutar código Python arbitrario en el servidor.",
+      "solution": "Reemplazar la ejecución dinámica por ast.literal_eval() para el análisis de datos, o usar una lista blanca de operaciones permitidas.",
+      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicación."
     },
     "taint_deserialization": {
       "name": "Deserialización (taint)",
-      "risk": "Un atacante puede lograr ejecucion remota de codigo enviando objetos Java serializados manipulados.",
+      "risk": "Un atacante puede lograr ejecución remota de código enviando objetos Java serializados manipulados.",
       "solution": "Usar ObjectInputFilter (Java 9+) o ValidatingObjectInputStream de Apache Commons.",
-      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicacion."
+      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicación."
     },
     "taint_ldap": {
       "name": "Inyección LDAP (taint)",
-      "risk": "Un atacante puede modificar consultas LDAP para evadir la autenticacion o extraer datos.",
+      "risk": "Un atacante puede modificar consultas LDAP para evadir la autenticación o extraer datos.",
       "solution": "Usar LdapEncoder.filterEncode() para sanear la entrada antes de consultas LDAP.",
-      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicacion."
+      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicación."
     },
     "taint_log_injection": {
       "name": "Inyección de log (taint)",
       "risk": "Un atacante puede falsificar entradas de log, ocultar rastros o explotar herramientas de procesamiento de logs.",
-      "solution": "Sanear la entrada de usuario antes de registrar en logs eliminando saltos de linea y caracteres de control.",
-      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicacion."
+      "solution": "Sanear la entrada de usuario antes de registrar en logs eliminando saltos de línea y caracteres de control.",
+      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicación."
     },
     "taint_open_redirect": {
       "name": "Redirección abierta (taint)",
       "risk": "Un atacante puede redirigir a los usuarios a un sitio malicioso mediante una URL manipulada.",
-      "solution": "Validar los destinos de redireccion contra una lista blanca. Usar url_for() para redirecciones internas.",
-      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicacion."
+      "solution": "Validar los destinos de redirección contra una lista blanca. Usar url_for() para redirecciones internas.",
+      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicación."
     },
     "taint_path_traversal": {
       "name": "Traversal de ruta (taint)",
       "risk": "Un atacante puede leer o escribir archivos arbitrarios en el servidor.",
       "solution": "Usar path.basename() y validar que la ruta resuelta permanezca dentro del directorio permitido.",
-      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicacion."
+      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicación."
     },
     "taint_rce": {
       "name": "Ejecución de comando (taint)",
       "risk": "Un atacante puede ejecutar comandos arbitrarios.",
       "solution": "Evitar Runtime.exec con entrada de usuario; usar ProcessBuilder con listas de argumentos.",
-      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicacion."
+      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicación."
     },
     "taint_sqli": {
       "name": "Inyección SQL (taint)",
       "risk": "Un atacante puede leer, modificar o eliminar registros de la base de datos.",
       "solution": "Usar consultas parametrizadas con placeholders (%s, ?).",
-      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicacion."
+      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicación."
     },
     "taint_ssrf": {
       "name": "SSRF (taint)",
-      "risk": "Un atacante puede hacer que el servidor envie solicitudes a servicios internos.",
+      "risk": "Un atacante puede hacer que el servidor envíe solicitudes a servicios internos.",
       "solution": "Validar URLs con Uri.TryCreate y verificar contra una lista blanca.",
-      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicacion."
+      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicación."
     },
     "taint_ssti": {
       "name": "SSTI (taint)",
-      "risk": "Un atacante puede ejecutar codigo arbitrario mediante inyeccion de plantillas, lo que frecuentemente conduce a RCE completa.",
+      "risk": "Un atacante puede ejecutar código arbitrario mediante inyección de plantillas, lo que frecuentemente conduce a RCE completa.",
       "solution": "Nunca pasar entrada de usuario directamente a motores de plantillas. Usar entornos sandboxed o plantillas precompiladas.",
-      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicacion."
+      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicación."
     },
     "taint_xpathi": {
       "name": "Inyección XPath (taint)",
-      "risk": "Un atacante puede manipular consultas XPath para evadir la autenticacion o extraer datos XML.",
-      "solution": "Usar consultas XPath parametrizadas con el parametro variables, o validar/escapar la entrada de usuario.",
-      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicacion."
+      "risk": "Un atacante puede manipular consultas XPath para evadir la autenticación o extraer datos XML.",
+      "solution": "Usar consultas XPath parametrizadas con el parámetro variables, o validar/escapar la entrada de usuario.",
+      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicación."
     },
     "taint_xss": {
       "name": "XSS (taint)",
       "risk": "Un atacante puede inyectar scripts maliciosos que se ejecutan en los navegadores de otros usuarios.",
       "solution": "Escapar toda la entrada de usuario antes de renderizar en HTML. Usar el auto-escapado del framework o html.escape().",
-      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicacion."
+      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicación."
     },
     "taint_xxe": {
       "name": "XXE (taint)",
       "risk": "Un atacante puede leer archivos locales, realizar SSRF o causar DoS mediante XML malicioso.",
       "solution": "Desactivar el procesamiento de entidades externas: setFeature(DISALLOW_DOCTYPE, true).",
-      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicacion."
+      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicación."
     },
     "trust_boundary_java": {
       "name": "Violación límite de confianza",
-      "risk": "Entrada de usuario almacenada en sesion HTTP sin validacion cruza el limite de confianza (CWE-501).",
-      "solution": "Validar y sanear toda entrada de usuario antes de almacenar en sesion.",
-      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicacion."
+      "risk": "Entrada de usuario almacenada en sesión HTTP sin validación cruza el limite de confianza (CWE-501).",
+      "solution": "Validar y sanear toda entrada de usuario antes de almacenar en sesión.",
+      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicación."
     },
     "weak_cipher_java": {
       "name": "Cifrado débil (Java)",
-      "risk": "Algoritmo de cifrado debil (DES, RC2, RC4) proporciona proteccion insuficiente (CWE-327).",
+      "risk": "Algoritmo de cifrado débil (DES, RC2, RC4) proporciona protección insuficiente (CWE-327).",
       "solution": "Usar AES-256-GCM o ChaCha20-Poly1305 para cifrado.",
-      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicacion."
+      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicación."
     },
     "weak_password_hash": {
       "name": "Hash de contraseña débil",
-      "risk": "SHA-256/SHA-512 son hash rapidos, no funciones de derivacion de clave. Las contrasenias hasheadas con SHA se descifran en segundos con GPU (CWE-916).",
+      "risk": "SHA-256/SHA-512 son hash rápidos, no funciones de derivación de clave. Las contrasenias hasheadas con SHA se descifran en segundos con GPU (CWE-916).",
       "solution": "Usar bcrypt.hashpw(), argon2.hash(), o passlib.hash.pbkdf2_sha256. Nunca usar hashlib para contrasenias.",
-      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicacion."
+      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicación."
     },
     "weak_random_java_util": {
       "name": "Random inseguro (Java)",
-      "risk": "java.util.Random no es criptograficamente seguro. Valores predecibles permiten secuestro de sesion (CWE-330).",
+      "risk": "java.util.Random no es criptográficamente seguro. Valores predecibles permiten secuestro de sesión (CWE-330).",
       "solution": "Usar java.security.SecureRandom para operaciones sensibles a la seguridad.",
-      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicacion."
+      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicación."
     },
     "websocket_no_validation": {
       "name": "WebSocket sin validación",
-      "risk": "Los mensajes WebSocket sin validar pueden contener payloads de inyeccion, datos sobredimensionados o estructuras malformadas (CWE-20).",
+      "risk": "Los mensajes WebSocket sin validar pueden contener payloads de inyección, datos sobredimensionados o estructuras malformadas (CWE-20).",
       "solution": "Validar todos los mensajes WebSocket entrantes contra un esquema (Zod, Joi, Ajv). Limitar el tamanio de los mensajes.",
-      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicacion."
+      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicación."
     },
     "xpath_injection_java_eval": {
       "name": "Inyección XPath (Java)",
-      "risk": "Expresion XPath construida con entrada de usuario por concatenacion permite extraccion de datos (CWE-643).",
-      "solution": "Usar consultas XPath parametrizadas con XPathVariableResolver en lugar de concatenacion.",
-      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicacion."
+      "risk": "Expresión XPath construida con entrada de usuario por concatenación permite extracción de datos (CWE-643).",
+      "solution": "Usar consultas XPath parametrizadas con XPathVariableResolver en lugar de concatenación.",
+      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicación."
     },
     "xss_servlet_response": {
       "name": "XSS respuesta Servlet",
-      "risk": "Entrada de usuario escrita directamente en la respuesta HTTP sin codificacion permite XSS reflejado (CWE-79).",
+      "risk": "Entrada de usuario escrita directamente en la respuesta HTTP sin codificación permite XSS reflejado (CWE-79).",
       "solution": "Usar el encoder OWASP ESAPI o escapar toda entrada de usuario antes de escribir en la respuesta.",
-      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicacion."
+      "benefit": "Reduce la superficie de ataque y refuerza la seguridad de la aplicación."
     },
     "db_tls_disabled_java": {
       "name": "Conexión BD sin TLS (Java)",
@@ -2813,7 +2813,7 @@
       "benefit": "Previene la exposición de credenciales mediante el código fuente y el historial de control de versiones (OWASP A02, CWE-798)."
     },
     "sql_injection_format_string_python": {
-      "name": "Inyección SQL via formato % (Python)",
+      "name": "Inyección SQL vía formato % (Python)",
       "risk": "Una consulta SQL construida con el operador % de Python en lugar de consultas parametrizadas permite inyectar SQL controlando los valores formateados (CWE-89).",
       "solution": "Usar consultas parametrizadas: cursor.execute(\"SELECT ... WHERE name = %s\", (name,)). El driver BD gestiona el escape de forma segura.",
       "benefit": "Elimina la inyección SQL mediante el formato de cadena Python (OWASP A03, CWE-89)."
@@ -2879,10 +2879,10 @@
       "benefit": "Previene la exposición de credenciales de BD mediante el código fuente (OWASP A02, CWE-798)."
     },
     "sql_injection_string_format_csharp": {
-      "name": "Inyección SQL via string.Format (C#)",
+      "name": "Inyección SQL vía string.Format (C#)",
       "risk": "Una consulta SQL construida con string.Format() integra valores del usuario directamente en la cadena de consulta, permitiendo inyección SQL (CWE-89).",
       "solution": "Usar SqlParameter: cmd.Parameters.AddWithValue(\"@name\", name). Para EF Core, usar ExecuteSqlInterpolated() en lugar de ExecuteSqlRaw() con string.Format.",
-      "benefit": "Elimina la inyección SQL via string.Format() imponiendo consultas parametrizadas (OWASP A03, CWE-89)."
+      "benefit": "Elimina la inyección SQL vía string.Format() imponiendo consultas parametrizadas (OWASP A03, CWE-89)."
     },
     "smoke_csharp_language_support": {
       "name": "Prueba de humo del pipeline C#"
@@ -3935,7 +3935,7 @@
   "threat_risk_medium_text": "{count} {severity_label} — {exposure_label}: 55 días de mediana. Se recomienda corregir antes del próximo ciclo de despliegue.",
   "threat_disclaimer": "Estadísticas generales del sector (Zero Day Clock), no específicas de este código.",
   "threat_source": "Fuente: Zero Day Clock (zerodayclock.com) — más de 83.000 CVE rastreadas",
-  "taint_fix_title": "Corrección sugerida",
+  "taint_fix_title": "Ejemplo genérico de corrección",
   "taint_fix_before": "Antes",
   "taint_fix_after": "Después",
   "file_check_why": "Por qué se detectó esto",
@@ -4019,5 +4019,23 @@
       "RC": "Recuperar"
     }
   },
-  "compliance_score": "Puntuación de conformidad"
+  "compliance_score": "Puntuación de conformidad",
+  "taint_fix_block_title": "A corregir",
+  "taint_step_source": "Entrada",
+  "taint_step_propagation": "Pasa por",
+  "taint_step_sink": "Llega a",
+  "taint_line_to_change": "línea a cambiar",
+  "taint_what_to_do": "Qué hacer en {location}:",
+  "taint_variable_origin": "{var} (origen: {kind}) llega a esta línea sin control.",
+  "taint_data_origin": "Un valor (origen: {kind}) llega a esta línea sin control.",
+  "taint_false_positive_hint": "¿Falso positivo? Si este valor ya está controlado (lista fija de valores, tipo UUID o int), suprima el hallazgo con 🚫 e infórmelo: es un error del motor.",
+  "locale_code": "es",
+  "playbook_step_locate": "Localice el código vulnerable en el archivo",
+  "playbook_step_rerun": "Vuelva a ejecutar la auditoría para verificar que el hallazgo está resuelto",
+  "finding_your_code": "Su código — {location}",
+  "finding_detected_line": "Línea detectada (L{line})",
+  "fix_proposed_title": "Corrección propuesta",
+  "fix_none": "No hay corrección automática para esta regla: aplique la solución de arriba; el ejemplo genérico muestra la idea.",
+  "fix_note_button_submit": "Si este botón envía un formulario, use type=\"submit\".",
+  "fix_note_th_row": "Si esta celda encabeza una fila, use scope=\"row\"."
 }

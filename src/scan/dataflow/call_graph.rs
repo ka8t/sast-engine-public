@@ -62,6 +62,25 @@ pub type SummariesByFile = BTreeMap<String, BTreeMap<String, Arc<FunctionSummary
 /// practice, bounded to avoid pathological cases.
 pub const MAX_SCC_FIXPOINT_ITER: u32 = 3;
 
+/// Writes the file and the code line on every step of a summary's
+/// template findings that has none yet: a step already stamped comes
+/// from a deeper callee and keeps its own file. Once a summary is used
+/// in another file, its steps still say where they are, so the report
+/// can show the real line of a query written two calls away.
+fn stamp_steps(summary: &mut FunctionSummary, filepath: &str, lines: Option<&[String]>) {
+    for template in summary.sink_param_findings.values_mut() {
+        for step in &mut template.flow {
+            if step.file.is_some() {
+                continue;
+            }
+            step.file = Some(filepath.to_string());
+            step.code = lines
+                .and_then(|l| l.get(step.line.wrapping_sub(1)))
+                .map(|l| l.trim().to_string());
+        }
+    }
+}
+
 fn path_parts(path: &str) -> Vec<String> {
     path.replace('\\', "/")
         .split('/')
@@ -502,7 +521,9 @@ impl<'tree> CallGraph<'tree> {
         };
         let source = *self.source_by_file.get(filepath)?;
         let lines = source_lines_by_file.get(filepath).map(|v| v.as_slice());
-        compute_summary(fn_info, &specs, source, lines).map(Arc::new)
+        let mut summary = compute_summary(fn_info, &specs, source, lines)?;
+        stamp_steps(&mut summary, filepath, lines);
+        Some(Arc::new(summary))
     }
 
     /// Computes the summaries of every function in the graph, in the
@@ -753,6 +774,17 @@ mod tests {
         assert!(
             main_summary.sink_param_findings.contains_key(&0),
             "main: param 0 (user_input) atteint le sink via helper (multi-hop)"
+        );
+
+        // The path keeps the real sink, in its own file, and the call
+        // to helper in a.py: the report shows both lines.
+        let flow = &main_summary.sink_param_findings[&0].flow;
+        let sink = flow.iter().rev().find(|s| s.kind == "sink").unwrap();
+        assert_eq!((sink.file.as_deref(), sink.line), (Some("utils.py"), 4), "{flow:?}");
+        assert!(
+            flow.iter()
+                .any(|s| s.kind == "propagation" && s.file.as_deref() == Some("a.py") && s.line == 4),
+            "{flow:?}"
         );
     }
 

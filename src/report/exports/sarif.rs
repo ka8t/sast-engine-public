@@ -106,6 +106,26 @@ pub struct TaintFlow {
     /// written before this field.
     #[serde(default)]
     pub source_kind: String,
+    /// Every step of the path in order, source first and sink last, each
+    /// with its own file and code line: the report draws the path from
+    /// it, including the steps inside a function of another file.
+    /// Empty in a baseline written before this field (`chain` and
+    /// `sink_*` then describe the flow).
+    #[serde(default)]
+    pub steps: Vec<TaintStep>,
+}
+
+/// One step of a taint path, as shown in the report.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TaintStep {
+    /// "source" | "propagation" | "sink".
+    pub kind: String,
+    /// File relative to the scanned root.
+    pub file: String,
+    pub line: usize,
+    /// The real code line, trimmed; the engine's description of the
+    /// step when the line could not be read.
+    pub code: String,
 }
 
 fn severity_to_sarif_level(severity: &str) -> String {
@@ -520,6 +540,7 @@ mod tests {
             sink_line: 10,
             sink_expr: "cursor.execute(q)".to_string(),
             source_kind: "http".to_string(),
+            steps: vec![],
         });
         let report = build_sarif_report(&[f], "t", "1.0", "https://x");
         let flows = report.runs[0].results[0].code_flows.as_ref().unwrap();

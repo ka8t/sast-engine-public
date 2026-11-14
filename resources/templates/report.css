@@ -228,6 +228,17 @@ a.glossary-link[data-tooltip]:hover::before { content: ''; position: absolute; b
 .taint-source, .taint-sink { margin: 0.4rem 0; padding: 0.3rem 0.5rem; border-radius: 4px; }
 .taint-source { background: #fee2e2; border-left: 3px solid #ef4444; }
 .taint-sink { background: #e8f0fe; border-left: 3px solid #1e3a5f; }
+.taint-fix-block { margin: 0.5rem 0; padding: 0.75rem; background: #fffbeb; border: 1px solid #fde68a; border-radius: 6px; font-size: 0.85rem; }
+.taint-fix-block summary { cursor: pointer; font-weight: 600; color: #92400e; }
+.taint-fix-steps { list-style: none; margin: 0.5rem 0; padding: 0; }
+.taint-fix-step { margin: 0.35rem 0; padding: 0.3rem 0.5rem; border-left: 3px solid var(--gray-200); }
+.taint-fix-step pre { margin: 0.2rem 0 0 1.5rem; white-space: pre-wrap; word-break: break-word; }
+.taint-fix-sink { border-left-color: var(--danger); background: #fef2f2; }
+.taint-fix-num { color: var(--gray-600); font-weight: 600; }
+.taint-fix-loc { font-family: monospace; color: var(--gray-600); }
+.taint-fix-mark { color: var(--danger); font-weight: 600; }
+.taint-fix-todo { margin: 0.5rem 0 0.25rem; }
+.taint-fix-fp { margin: 0.25rem 0 0; color: var(--gray-600); font-style: italic; }
 .taint-chain { margin: 0.3rem 0; padding-left: 1rem; border-left: 2px dashed #86efac; }
 .taint-step { padding: 0.2rem 0; }
 .taint-line { font-family: monospace; font-weight: 600; color: #6b7280; min-width: 3rem; display: inline-block; }
@@ -717,3 +728,9 @@ a.playbook-ref:hover { background: var(--primary-light); color: #fff; }
 .file-check-explain p { margin: 4px 0; color: var(--gray-800); }
 .file-check-explain code { font-size: 12px; background: var(--gray-100); padding: 1px 5px; border-radius: 3px; }
 @media print { .file-check-explain { display: block; } .file-check-explain summary { display: none; } }
+.finding-code-label { font-size: 0.75rem; font-weight: 600; color: var(--gray-600); margin-bottom: 0.2rem; }
+.fix-proposal { margin: 0.4rem 0; padding: 0.5rem 0.75rem; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 6px; }
+.fix-proposal-title { font-size: 0.8rem; font-weight: 600; color: #166534; margin-bottom: 0.2rem; }
+.fix-proposal pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
+.fix-proposal-note { margin: 0.3rem 0 0; font-size: 0.8rem; color: var(--gray-600); font-style: italic; }
+.fix-proposal-none { margin: 0.3rem 0; font-size: 0.8rem; color: var(--gray-600); font-style: italic; }

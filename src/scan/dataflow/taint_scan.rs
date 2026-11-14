@@ -14,7 +14,7 @@ use tree_sitter::Tree;
 
 use super::cfg::{build_cfg, build_cfg_from_block};
 use super::lattice::{SourceInfo, Taint, empty_state, state_set};
-use super::summary::{collect_functions, route_source_params};
+use super::summary::{collect_functions, route_source_params, rule_source_kinds};
 use super::transfer::{Finding, RuleSpecs};
 use super::worklist::analyze;
 
@@ -38,13 +38,23 @@ pub fn run_taint_rule(
     let result = analyze(&cfg, source, specs, None, source_lines);
     let mut all_findings: Vec<Finding> = result.findings;
 
+    let http_rule = rule_source_kinds(specs).iter().any(|k| k == "http");
     for fn_info in collect_functions(root, source) {
         let Some(body) = fn_info.body_node else {
             continue;
         };
         let sub_cfg = build_cfg_from_block(source, body);
 
-        let route_params = route_source_params(&fn_info, source);
+        // Deliberate deviation from Python (`dataflow_taint.py`, which
+        // seeds route parameters for every taint rule): a rule whose
+        // sources are not HTTP inputs (`llm_output_to_sink`: LLM answers
+        // only) never sees them, otherwise every `.execute(` of a
+        // FastAPI handler became "LLM output reaching a sink".
+        let route_params = if http_rule {
+            route_source_params(&fn_info, source)
+        } else {
+            Vec::new()
+        };
         let init_state = if route_params.is_empty() {
             None
         } else {
@@ -153,6 +163,33 @@ mod tests {
             1,
             "item_id (paramètre de route) doit être seedé tainté http"
         );
+    }
+
+    #[test]
+    fn test_route_params_not_seeded_for_a_rule_without_http_source() {
+        // `llm_output_to_sink` only takes LLM answers (`kind=network`):
+        // a route parameter reaching `.execute(` is not its concern
+        // (my-ia, 32 false positives on SQLAlchemy calls, 2026-11-14).
+        let src = "@app.get('/x')\ndef handler(item_id: str):\n    db.execute(item_id)\n";
+        let tree = parse(src);
+        let specs = specs_with(
+            vec![SourceSpec::new("response.text", "network")],
+            vec![SinkSpec::new("db.execute")],
+        );
+        let findings = run_taint_rule(&tree, src.as_bytes(), &specs, None);
+        assert!(findings.is_empty(), "{findings:?}");
+    }
+
+    #[test]
+    fn test_route_params_typed_as_non_text_scalars_not_seeded() {
+        // FastAPI converts `UUID`/`int`/`float`/`bool` parameters
+        // before the handler runs: the value cannot hold a payload.
+        let src = "@app.get('/x')\ndef handler(a: UUID, b: int, c: float, d: bool, e: str):\n    os.system(a)\n    os.system(b)\n    os.system(c)\n    os.system(d)\n    os.system(e)\n";
+        let tree = parse(src);
+        let specs = specs_with(vec![], vec![SinkSpec::new("os.system")]);
+        let findings = run_taint_rule(&tree, src.as_bytes(), &specs, None);
+        let lines: Vec<usize> = findings.iter().map(|f| f.line).collect();
+        assert_eq!(lines, vec![7], "only the `str` parameter is a source");
     }
 
     #[test]

@@ -11,6 +11,7 @@ pub mod data;
 pub mod export_json;
 pub mod exports;
 pub mod findings_html;
+pub mod fix_proposal;
 pub mod html;
 pub mod playbook;
 pub mod report_assets;

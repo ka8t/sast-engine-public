@@ -5,6 +5,7 @@
         <span class="finding-category"><span class="category-icon">{{category_icon}}</span> {{category_name}}</span>
         <span class="finding-file">{{file}}:{{line}}</span>{{language_badge}}{{committer_display}}{{taint_badges}}
     </div>
-    <div class="finding-code-block">{{context_before_html}}<div class="finding-code-highlight" title="Ligne détectée (L{{line}})">{{code}}</div>{{context_after_html}}</div>
+    <div class="finding-code-block"><div class="finding-code-label">{{code_label}}</div>{{context_before_html}}<div class="finding-code-highlight" title="{{highlight_title}}">{{code}}</div>{{context_after_html}}</div>
+    {{fix_html}}
     {{taint_trace}}
 </div>
