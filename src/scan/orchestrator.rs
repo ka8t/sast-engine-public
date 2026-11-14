@@ -1621,7 +1621,9 @@ pub fn run_scan(config: &ScanConfig) -> ScanReport {
                         continue;
                     }
                     let code = line_text(&pf.all_lines, f.line);
-                    if suppressions.is_suppressed(&f.rule_id, &pf.rel_path, &code) {
+                    // Trimmed, as the report hashes it for its 🚫 button
+                    // (`ReportFinding.code`): an indented line never matched.
+                    if suppressions.is_suppressed(&f.rule_id, &pf.rel_path, code.trim()) {
                         continue;
                     }
                     if is_inline_ignored(&code, &f.rule_id) {
@@ -1750,7 +1752,9 @@ pub fn run_scan(config: &ScanConfig) -> ScanReport {
                         continue;
                     }
                     let code = line_text(&pf.all_lines, f.line);
-                    if suppressions.is_suppressed(&f.rule_id, &pf.rel_path, &code) {
+                    // Trimmed, as the report hashes it for its 🚫 button
+                    // (`ReportFinding.code`): an indented line never matched.
+                    if suppressions.is_suppressed(&f.rule_id, &pf.rel_path, code.trim()) {
                         continue;
                     }
                     if is_inline_ignored(&code, &f.rule_id) {
@@ -1868,7 +1872,9 @@ pub fn run_scan(config: &ScanConfig) -> ScanReport {
                         continue;
                     }
                     let code = line_text(&pf.all_lines, f.line);
-                    if suppressions.is_suppressed(&f.rule_id, &pf.rel_path, &code) {
+                    // Trimmed, as the report hashes it for its 🚫 button
+                    // (`ReportFinding.code`): an indented line never matched.
+                    if suppressions.is_suppressed(&f.rule_id, &pf.rel_path, code.trim()) {
                         continue;
                     }
                     if is_inline_ignored(&code, &f.rule_id) {
@@ -1974,7 +1980,9 @@ pub fn run_scan(config: &ScanConfig) -> ScanReport {
                         continue;
                     }
                     let code = line_text(&pf.all_lines, f.line);
-                    if suppressions.is_suppressed(&f.rule_id, &pf.rel_path, &code) {
+                    // Trimmed, as the report hashes it for its 🚫 button
+                    // (`ReportFinding.code`): an indented line never matched.
+                    if suppressions.is_suppressed(&f.rule_id, &pf.rel_path, code.trim()) {
                         continue;
                     }
                     if is_inline_ignored(&code, &f.rule_id) {
@@ -2079,7 +2087,9 @@ pub fn run_scan(config: &ScanConfig) -> ScanReport {
                         continue;
                     }
                     let code = line_text(&pf.all_lines, f.line);
-                    if suppressions.is_suppressed(&f.rule_id, &pf.rel_path, &code) {
+                    // Trimmed, as the report hashes it for its 🚫 button
+                    // (`ReportFinding.code`): an indented line never matched.
+                    if suppressions.is_suppressed(&f.rule_id, &pf.rel_path, code.trim()) {
                         continue;
                     }
                     if is_inline_ignored(&code, &f.rule_id) {
@@ -2663,6 +2673,52 @@ mod tests {
         assert!(
             report.findings.is_empty(),
             "finding supprimé par .sca-suppress.json"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn test_suppression_from_the_report_removes_an_indented_taint_finding() {
+        // The report's 🚫 button hashes the trimmed line (`ReportFinding.
+        // code`); the taint pass compared the line with its indentation,
+        // so a data-flow finding inside a function never went away
+        // (2026-11-14, found while writing the shared install guide).
+        let root = temp_dir();
+        let rules_dir = root.join("rules");
+        std::fs::create_dir_all(&rules_dir).unwrap();
+        write(
+            &rules_dir,
+            "taint_cmd.sca",
+            "rule taint_cmd\n  language  python\n  category  security\n  severity  HIGH\n  source  input\\s*\\(  kind=cli\n  sink    os\\.system\\s*\\(\nend\n",
+        );
+        write(&root, "app.py", "import os\n\ndef handler():\n    cmd = input()\n    os.system(cmd)\n");
+        let config = ScanConfig {
+            root: root.clone(),
+            rules_path: rules_dir.clone(),
+            exclude_patterns: vec![],
+            ..ScanConfig::default()
+        };
+        let first = run_scan(&config);
+        let finding = first
+            .findings
+            .iter()
+            .find(|f| f.rule_key == "taint_cmd")
+            .expect("taint finding before suppression");
+        let hash = crate::project::suppress::line_hash(&finding.code);
+        let suppress_path = root.join(".sca-suppress.json");
+        std::fs::write(
+            &suppress_path,
+            format!(r#"{{"version": "1.0", "suppressions": [{{"rule_key": "taint_cmd", "file": "app.py", "code_hash": {hash}}}]}}"#),
+        )
+        .unwrap();
+        let report = run_scan(&ScanConfig {
+            suppress_file: Some(suppress_path),
+            ..config
+        });
+        assert!(
+            report.findings.iter().all(|f| f.rule_key != "taint_cmd"),
+            "{:?}",
+            report.findings
         );
         std::fs::remove_dir_all(&root).ok();
     }
