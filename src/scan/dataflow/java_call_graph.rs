@@ -296,6 +296,24 @@ impl<'tree> JavaCallGraph<'tree> {
         base_specs: &RuleSpecs,
         source_lines_by_file: Option<&BTreeMap<String, Vec<String>>>,
     ) -> (SummariesByFile, SummariesByFile) {
+        let resolved = self.resolve_summaries_incremental(base_specs, source_lines_by_file, None);
+        (resolved.own, resolved.extra)
+    }
+
+    /// `resolve_summaries`, reusing the summaries of a previous scan where
+    /// they cannot have changed (scan cache, issue #183). Java resolves in
+    /// a plain topological order, a method seeing only the callees already
+    /// resolved before it; a method keeps its previous summary when its
+    /// file is clean and none of those callees changed in this scan, which
+    /// gives exactly the seed a full scan would give it.
+    pub fn resolve_summaries_incremental(
+        &self,
+        base_specs: &RuleSpecs,
+        source_lines_by_file: Option<&BTreeMap<String, Vec<String>>>,
+        reuse: Option<&super::call_graph::SummaryReuse>,
+    ) -> super::call_graph::ResolvedSummaries {
+        let mut changed: std::collections::BTreeSet<NodeKey> = std::collections::BTreeSet::new();
+        let mut recomputed = 0usize;
         let empty_lines = BTreeMap::new();
         let source_lines_by_file = source_lines_by_file.unwrap_or(&empty_lines);
 
@@ -318,6 +336,18 @@ impl<'tree> JavaCallGraph<'tree> {
             let Some(fn_info) = self.nodes.get(&node) else {
                 continue;
             };
+            if let Some(reuse) = reuse
+                && !reuse.dirty_files.contains(&filepath)
+                && self
+                    .edges
+                    .get(&node)
+                    .is_none_or(|e| e.values().all(|t| !changed.contains(t)))
+                && let Some(previous) = reuse.previous.get(&node)
+            {
+                resolved.insert(node, previous.clone());
+                own.entry(filepath).or_default().insert(name, previous.clone());
+                continue;
+            }
             let mut seed: BTreeMap<String, Arc<FunctionSummary>> = BTreeMap::new();
             if let Some(edges) = self.edges.get(&node) {
                 for (local_name, target) in edges {
@@ -339,6 +369,10 @@ impl<'tree> JavaCallGraph<'tree> {
             // the actual cost on a large corpus (high fan-in "hub"
             // nodes, e.g. OWASP BenchmarkJava) — see the `SummariesByFile` doc.
             let summary = Arc::new(compute_java_summary(fn_info, &node_specs, source, lines));
+            recomputed += 1;
+            if reuse.is_none_or(|r| r.previous.get(&node) != Some(&summary)) {
+                changed.insert(node.clone());
+            }
             resolved.insert(node, summary.clone());
             own.entry(filepath).or_default().insert(name, summary);
         }
@@ -410,7 +444,32 @@ impl<'tree> JavaCallGraph<'tree> {
             }
         }
 
-        (own, extra)
+        super::call_graph::ResolvedSummaries {
+            own,
+            extra,
+            all: resolved,
+            changed,
+            recomputed,
+        }
+    }
+
+    /// True when `file` reads a summary that changed in this scan.
+    pub fn consumes_changed(
+        &self,
+        file: &str,
+        changed: &std::collections::BTreeSet<NodeKey>,
+    ) -> bool {
+        super::call_graph::consumes_changed_in(&self.import_bindings, file, changed)
+    }
+
+    /// What, besides its own text, decides the analysis of `file`.
+    pub fn dependency_fingerprint(&self, file: &str) -> String {
+        super::call_graph::dependency_fingerprint_in(
+            &self.edges,
+            self.nodes.keys(),
+            &self.import_bindings,
+            file,
+        )
     }
 }
 

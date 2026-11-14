@@ -987,6 +987,11 @@ enum Command {
         /// `.sca-suppress.json` file.
         #[arg(long)]
         suppress_file: Option<PathBuf>,
+        /// Analyses everything again, without reading or writing the taint
+        /// cache of `audit-reports/audit-datas/cache/` (by default, a
+        /// re-scan only redoes the files a change can affect).
+        #[arg(long)]
+        no_cache: bool,
         /// Exclusion pattern (repeatable, glob/directory/extension).
         #[arg(long = "exclude")]
         exclude: Vec<String>,
@@ -1188,6 +1193,7 @@ fn dispatch(command: Command) -> ExitCode {
             log_format,
             output,
             suppress_file,
+            no_cache,
             exclude,
             quiet,
             with_tests,
@@ -1216,6 +1222,7 @@ fn dispatch(command: Command) -> ExitCode {
             log_format,
             output,
             suppress_file,
+            no_cache,
             exclude,
             quiet,
             with_tests,
@@ -1422,6 +1429,7 @@ struct ScanArgs {
     log_format: String,
     output: Option<PathBuf>,
     suppress_file: Option<PathBuf>,
+    no_cache: bool,
     exclude: Vec<String>,
     quiet: bool,
     with_tests: bool,
@@ -1453,6 +1461,7 @@ fn run_scan_command(args: ScanArgs) -> ExitCode {
         log_format,
         output,
         suppress_file,
+        no_cache,
         exclude,
         quiet,
         with_tests,
@@ -1776,12 +1785,18 @@ fn run_scan_command(args: ScanArgs) -> ExitCode {
         ))
         .collect();
 
+    // Taint cache next to the history (`scan_cache`), unless `--no-cache`.
+    let cache_dir = data_dir
+        .as_ref()
+        .filter(|_| !no_cache)
+        .map(|d| d.join("cache"));
     let config = ScanConfig {
         root: path,
         include_paths,
         rules_path,
         target_languages,
         suppress_file,
+        cache_dir,
         exclude_patterns,
         with_tests,
         test_command,
@@ -1837,6 +1852,29 @@ fn run_scan_command(args: ScanArgs) -> ExitCode {
         sast_engine::i18n::t(&script_locale, key)
     }) {
         emit_progress(quiet, &format!("[sast-engine] {line}"));
+    }
+    // Taint cache (`scan_cache`): what a re-scan redid, so that a slow one
+    // shows why (many files changed) and a fast one that it reused work.
+    for stat in &report.cache_stats {
+        emit_progress(
+            quiet,
+            &format!(
+                "[sast-engine] {}",
+                sast_engine::i18n::t(
+                    &script_locale,
+                    if stat.language == "patterns" {
+                        "scan_cache_patterns_line"
+                    } else {
+                        "scan_cache_line"
+                    },
+                )
+                    .replace("{language}", &stat.language)
+                    .replace("{dirty}", &stat.dirty.to_string())
+                    .replace("{files}", &stat.files.to_string())
+                    .replace("{analysed}", &stat.analysed.to_string())
+                    .replace("{total}", &stat.total.to_string())
+            ),
+        );
     }
     if !report.undeclared_languages.is_empty() {
         emit_warning(&format!(

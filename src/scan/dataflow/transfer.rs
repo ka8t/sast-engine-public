@@ -813,7 +813,7 @@ pub struct RuleSpecs {
 /// taint flows through its calls.
 /// `PartialEq`: used by `call_graph.rs` to detect fixpoint
 /// convergence per SCC (correction vs Python, Decision #3).
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct FunctionSummary {
     pub name: String,
     /// Positional parameters (excluding self/cls).
@@ -834,7 +834,7 @@ pub struct FunctionSummary {
 // Finding
 // ============================================================================
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct FlowStep {
     pub line: usize,
     /// "source" | "propagation" | "sink".
@@ -852,7 +852,7 @@ pub struct FlowStep {
 }
 
 /// A reported taint finding, conforming to CONTRACT-SCA-AUDITAI.md §3.2.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Finding {
     pub rule_id: String,
     pub severity: String,

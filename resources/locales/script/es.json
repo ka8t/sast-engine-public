@@ -377,5 +377,7 @@
   "scan_languages_unknown": "Advertencia: valor(es) de \"languages\" en audit.config.json que no designan ningún lenguaje compatible, ignorado(s): {languages}",
   "scan_unknown_format": "Error: formato desconocido: {format} (esperado: text|sarif|html)",
   "scan_internal_error": "Error interno: {error}",
-  "scan_rule_skipped": "Regla ignorada ({path}): {error}"
+  "scan_rule_skipped": "Regla ignorada ({path}): {error}",
+  "scan_cache_line": "Caché ({language}): {dirty}/{files} archivo(s) modificado(s) desde el último análisis, {analysed}/{total} análisis de flujo rehechos.",
+  "scan_cache_patterns_line": "Caché (reglas de patrón): {analysed}/{files} archivo(s) analizado(s) de nuevo, los demás sin cambios desde el último análisis."
 }

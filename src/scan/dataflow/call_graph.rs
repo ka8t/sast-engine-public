@@ -93,6 +93,30 @@ fn common_prefix_len(a: &[String], b: &[String]) -> usize {
     a.iter().zip(b.iter()).take_while(|(x, y)| x == y).count()
 }
 
+/// The analysed files, indexed by file name with their path already split:
+/// a suffix always ends with a file name, so only the files of that name
+/// can match. Matching every import against every file, splitting each
+/// path again, made the graph build grow with the square of the project
+/// (1.1 s of a 2.8 s cached re-scan on 460 files, 2026-11-14).
+pub(crate) struct KnownFiles {
+    by_name: std::collections::HashMap<String, Vec<(String, Vec<String>)>>,
+}
+
+impl KnownFiles {
+    /// Index of `files` (paths relative to the scanned root).
+    pub(crate) fn new(files: &[String]) -> Self {
+        let mut by_name: std::collections::HashMap<String, Vec<(String, Vec<String>)>> =
+            std::collections::HashMap::new();
+        for fp in files {
+            let parts = path_parts(fp);
+            if let Some(name) = parts.last() {
+                by_name.entry(name.clone()).or_default().push((fp.clone(), parts));
+            }
+        }
+        KnownFiles { by_name }
+    }
+}
+
 /// Returns the file from `known_files` whose path ends with `suffix`.
 /// `anchored` (relative import) requires an exact end match; when not
 /// anchored (absolute import), a directory prefix is tolerated but
@@ -101,17 +125,22 @@ fn match_unique_suffix(
     suffix: &str,
     anchored: bool,
     importer: &str,
-    known_files: &[String],
+    known_files: &KnownFiles,
 ) -> Option<String> {
     let suffix_parts = path_parts(suffix);
-    let candidates: Vec<&String> = known_files
+    let same_name = suffix_parts
+        .last()
+        .and_then(|name| known_files.by_name.get(name))
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let candidates: Vec<&String> = same_name
         .iter()
-        .filter(|fp| fp.as_str() != importer)
-        .filter(|fp| {
-            let fp_parts = path_parts(fp);
+        .filter(|(fp, _)| fp.as_str() != importer)
+        .filter(|(_, fp_parts)| {
             fp_parts.len() >= suffix_parts.len()
                 && fp_parts[fp_parts.len() - suffix_parts.len()..] == suffix_parts[..]
         })
+        .map(|(fp, _)| fp)
         .collect();
     if candidates.len() == 1 {
         return Some(candidates[0].clone());
@@ -131,7 +160,7 @@ fn match_unique_suffix(
 /// path. Absolute (`level == 0`): `mod/parts.py` suffix, resolved only
 /// if it matches **exactly one** file in the set (ambiguity →
 /// give up, anti-FP).
-fn resolve_target_file(importer: &str, imp: &ImportInfo, known_files: &[String]) -> Option<String> {
+fn resolve_target_file(importer: &str, imp: &ImportInfo, known_files: &KnownFiles) -> Option<String> {
     let mod_parts: Vec<String> = if imp.module.is_empty() {
         vec![]
     } else {
@@ -179,7 +208,7 @@ fn resolve_target_file(importer: &str, imp: &ImportInfo, known_files: &[String])
 fn resolve_import_bindings(
     filepath: &str,
     imports: &[ImportInfo],
-    known_files: &[String],
+    known_files: &KnownFiles,
     file_function_names: &BTreeMap<String, BTreeSet<String>>,
 ) -> BTreeMap<String, NodeKey> {
     let mut out: BTreeMap<String, NodeKey> = BTreeMap::new();
@@ -349,6 +378,31 @@ pub struct FileInput<'tree> {
     pub source: &'tree [u8],
 }
 
+/// The summaries of a previous run and the files whose text changed since:
+/// what `resolve_summaries_incremental` may reuse.
+pub struct SummaryReuse<'a> {
+    /// Every summary of the previous run, by function (`None` absent:
+    /// the function had none).
+    pub previous: &'a BTreeMap<NodeKey, Arc<FunctionSummary>>,
+    /// Files new, modified, or whose `dependency_fingerprint` changed.
+    pub dirty_files: &'a BTreeSet<String>,
+}
+
+/// Result of `resolve_summaries_incremental`.
+#[derive(Default)]
+pub struct ResolvedSummaries {
+    /// Summaries of each file's own functions.
+    pub own: SummariesByFile,
+    /// Summaries each file imports, by local name.
+    pub extra: SummariesByFile,
+    /// Every summary, by function: what the cache stores for the next run.
+    pub all: BTreeMap<NodeKey, Arc<FunctionSummary>>,
+    /// Functions whose summary differs from the previous run.
+    pub changed: BTreeSet<NodeKey>,
+    /// Functions whose summary was computed rather than reused.
+    pub recomputed: usize,
+}
+
 /// Call graph of a set of Python files analyzed together.
 ///
 /// `nodes`: every known function/method, indexed by (file, name).
@@ -391,20 +445,23 @@ impl<'tree> CallGraph<'tree> {
         }
 
         let known_files: Vec<String> = file_function_names.keys().cloned().collect();
+        let known_index = KnownFiles::new(&known_files);
         for filepath in &known_files {
             let imports = imports_by_file.get(filepath).cloned().unwrap_or_default();
             let bindings =
-                resolve_import_bindings(filepath, &imports, &known_files, &file_function_names);
+                resolve_import_bindings(filepath, &imports, &known_index, &file_function_names);
             let local_names = file_function_names
                 .get(filepath)
                 .cloned()
                 .unwrap_or_default();
             let source = graph.source_by_file[filepath];
+            // This file's functions: a range of the sorted keys, not a scan
+            // of every function of the project.
             let fn_keys: Vec<NodeKey> = graph
                 .nodes
-                .keys()
-                .filter(|(fp, _)| fp == filepath)
-                .cloned()
+                .range((filepath.clone(), String::new())..)
+                .take_while(|((fp, _), _)| fp == filepath)
+                .map(|(k, _)| k.clone())
                 .collect();
             for key in fn_keys {
                 let edges = outgoing_edges(
@@ -543,78 +600,233 @@ impl<'tree> CallGraph<'tree> {
         base_specs: &RuleSpecs,
         source_lines_by_file: Option<&BTreeMap<String, Vec<String>>>,
     ) -> (SummariesByFile, SummariesByFile) {
+        let resolved = self.resolve_summaries_incremental(base_specs, source_lines_by_file, None);
+        (resolved.own, resolved.extra)
+    }
+
+    /// `resolve_summaries`, reusing the summaries of a previous run where
+    /// they cannot have changed (scan cache, 2026-11-14).
+    ///
+    /// A function keeps its previous summary when its file is not in
+    /// `reuse.dirty_files` and no function it calls got a different
+    /// summary in this run: its summary only depends on its own code and
+    /// on its callees' summaries (`build_seed`). A cycle keeps its members'
+    /// summaries on the same condition for all of them and their outside
+    /// callees. Every function whose summary differs from the previous one
+    /// (or that had none) is listed in `changed`, so the caller re-runs
+    /// exactly the files that consume one of them. Without `reuse`, every
+    /// summary is computed and listed as changed: the behaviour of a full
+    /// scan.
+    pub fn resolve_summaries_incremental(
+        &self,
+        base_specs: &RuleSpecs,
+        source_lines_by_file: Option<&BTreeMap<String, Vec<String>>>,
+        reuse: Option<&SummaryReuse>,
+    ) -> ResolvedSummaries {
         let empty_lines = BTreeMap::new();
         let source_lines_by_file = source_lines_by_file.unwrap_or(&empty_lines);
 
         let sccs = self.strongly_connected_components();
-        let mut resolved: BTreeMap<NodeKey, Arc<FunctionSummary>> = BTreeMap::new();
-        let mut own: SummariesByFile = BTreeMap::new();
-
-        for scc in sccs {
-            let is_self_loop = scc.len() == 1
-                && self
-                    .edges
-                    .get(&scc[0])
-                    .map(|e| e.values().any(|t| t == &scc[0]))
-                    .unwrap_or(false);
-
-            if scc.len() == 1 && !is_self_loop {
-                let node = &scc[0];
-                let seed = self.build_seed(node, &resolved, &BTreeMap::new());
-                if let Some(summary) =
-                    self.compute_one(node, seed, base_specs, source_lines_by_file)
-                {
-                    resolved.insert(node.clone(), summary.clone());
-                    own.entry(node.0.clone())
-                        .or_default()
-                        .insert(node.1.clone(), summary);
-                }
-                continue;
-            }
-
-            // Real cycle (multi-node SCC, or direct self-recursion):
-            // bounded fixpoint between the members.
-            let mut current: BTreeMap<NodeKey, Arc<FunctionSummary>> = BTreeMap::new();
-            for _ in 0..MAX_SCC_FIXPOINT_ITER {
-                let mut next: BTreeMap<NodeKey, Arc<FunctionSummary>> = BTreeMap::new();
-                for node in &scc {
-                    let seed = self.build_seed(node, &resolved, &current);
-                    if let Some(summary) =
-                        self.compute_one(node, seed, base_specs, source_lines_by_file)
-                    {
-                        next.insert(node.clone(), summary);
-                    }
-                }
-                let converged = next == current;
-                current = next;
-                if converged {
-                    break;
-                }
-            }
-            for node in &scc {
-                if let Some(summary) = current.remove(node) {
-                    resolved.insert(node.clone(), summary.clone());
-                    own.entry(node.0.clone())
-                        .or_default()
-                        .insert(node.1.clone(), summary);
-                }
-            }
-        }
-
-        let mut extra: SummariesByFile = BTreeMap::new();
-        for (filepath, bindings) in &self.import_bindings {
-            for (local_name, target) in bindings {
-                if let Some(s) = resolved.get(target) {
-                    extra
-                        .entry(filepath.clone())
-                        .or_default()
-                        .insert(local_name.clone(), s.clone());
-                }
-            }
-        }
-
-        (own, extra)
+        resolve_incremental(sccs, &self.edges, &self.import_bindings, reuse, |node, resolved, current| {
+            let seed = self.build_seed(node, resolved, current);
+            self.compute_one(node, seed, base_specs, source_lines_by_file)
+        })
     }
+
+    /// True when `file` reads a summary that changed in this run: one of
+    /// its own functions (module code and functions call each other) or a
+    /// function it imports. Such a file must be analysed again even if its
+    /// text did not change.
+    pub fn consumes_changed(&self, file: &str, changed: &BTreeSet<NodeKey>) -> bool {
+        consumes_changed_in(&self.import_bindings, file, changed)
+    }
+
+    /// What, besides its own text, decides the analysis of `file`: its
+    /// functions, the calls they resolve and the imports it resolves. It
+    /// changes when another file is added, removed or renamed in a way
+    /// that changes a resolution, so that a cached result is never reused
+    /// against a different graph.
+    pub fn dependency_fingerprint(&self, file: &str) -> String {
+        dependency_fingerprint_in(&self.edges, self.nodes.keys(), &self.import_bindings, file)
+    }
+}
+
+/// The incremental summary resolution shared by every language's call
+/// graph (scan cache, 2026-11-14): `sccs` in topological order (callees
+/// first), the graph's `edges` and `import_bindings`, and `compute`, which
+/// computes one function's summary from the summaries resolved so far and
+/// those of the current cycle. See `CallGraph::resolve_summaries_incremental`
+/// for what is reused and what is listed as changed.
+pub(crate) fn resolve_incremental(
+    sccs: Vec<Vec<NodeKey>>,
+    edges: &BTreeMap<NodeKey, BTreeMap<String, NodeKey>>,
+    import_bindings: &BTreeMap<String, BTreeMap<String, NodeKey>>,
+    reuse: Option<&SummaryReuse>,
+    compute: impl Fn(
+        &NodeKey,
+        &BTreeMap<NodeKey, Arc<FunctionSummary>>,
+        &BTreeMap<NodeKey, Arc<FunctionSummary>>,
+    ) -> Option<Arc<FunctionSummary>>,
+) -> ResolvedSummaries {
+    let mut resolved: BTreeMap<NodeKey, Arc<FunctionSummary>> = BTreeMap::new();
+    let mut own: SummariesByFile = BTreeMap::new();
+    let mut changed: BTreeSet<NodeKey> = BTreeSet::new();
+    let mut recomputed = 0usize;
+
+    // The previous summary of `node` (`None`: it had none), when the
+    // node may reuse it; `Err(())` when it must be computed.
+    let reusable = |node: &NodeKey, changed: &BTreeSet<NodeKey>, members: &[NodeKey]| {
+        let reuse = reuse.ok_or(())?;
+        if reuse.dirty_files.contains(&node.0) {
+            return Err(());
+        }
+        let callees_unchanged = edges
+            .get(node)
+            .map(|e| e.values().all(|t| members.contains(t) || !changed.contains(t)))
+            .unwrap_or(true);
+        if !callees_unchanged {
+            return Err(());
+        }
+        Ok(reuse.previous.get(node).cloned())
+    };
+    let record = |node: &NodeKey,
+                  summary: Option<Arc<FunctionSummary>>,
+                  resolved: &mut BTreeMap<NodeKey, Arc<FunctionSummary>>,
+                  own: &mut SummariesByFile,
+                  changed: &mut BTreeSet<NodeKey>,
+                  was_recomputed: bool| {
+        if was_recomputed {
+            let before = reuse.and_then(|r| r.previous.get(node));
+            if reuse.is_none() || before != summary.as_ref() {
+                changed.insert(node.clone());
+            }
+        }
+        if let Some(summary) = summary {
+            resolved.insert(node.clone(), summary.clone());
+            own.entry(node.0.clone())
+                .or_default()
+                .insert(node.1.clone(), summary);
+        }
+    };
+
+    for scc in sccs {
+        let is_self_loop = scc.len() == 1
+            && edges
+                .get(&scc[0])
+                .map(|e| e.values().any(|t| t == &scc[0]))
+                .unwrap_or(false);
+
+        if scc.len() == 1 && !is_self_loop {
+            let node = &scc[0];
+            match reusable(node, &changed, &[]) {
+                Ok(previous) => {
+                    record(node, previous, &mut resolved, &mut own, &mut changed, false)
+                }
+                Err(()) => {
+                    let summary = compute(node, &resolved, &BTreeMap::new());
+                    recomputed += 1;
+                    record(node, summary, &mut resolved, &mut own, &mut changed, true);
+                }
+            }
+            continue;
+        }
+
+        // A cycle keeps its previous summaries only as a whole.
+        let previous: Option<Vec<Option<Arc<FunctionSummary>>>> = scc
+            .iter()
+            .map(|node| reusable(node, &changed, &scc).ok())
+            .collect();
+        if let Some(previous) = previous {
+            for (node, summary) in scc.iter().zip(previous) {
+                record(node, summary, &mut resolved, &mut own, &mut changed, false);
+            }
+            continue;
+        }
+
+        // Real cycle (multi-node SCC, or direct self-recursion):
+        // bounded fixpoint between the members.
+        let mut current: BTreeMap<NodeKey, Arc<FunctionSummary>> = BTreeMap::new();
+        for _ in 0..MAX_SCC_FIXPOINT_ITER {
+            let mut next: BTreeMap<NodeKey, Arc<FunctionSummary>> = BTreeMap::new();
+            for node in &scc {
+                if let Some(summary) = compute(node, &resolved, &current) {
+                    next.insert(node.clone(), summary);
+                }
+            }
+            let converged = next == current;
+            current = next;
+            if converged {
+                break;
+            }
+        }
+        for node in &scc {
+            recomputed += 1;
+            let summary = current.remove(node);
+            record(node, summary, &mut resolved, &mut own, &mut changed, true);
+        }
+    }
+
+    let mut extra: SummariesByFile = BTreeMap::new();
+    for (filepath, bindings) in import_bindings {
+        for (local_name, target) in bindings {
+            if let Some(s) = resolved.get(target) {
+                extra
+                    .entry(filepath.clone())
+                    .or_default()
+                    .insert(local_name.clone(), s.clone());
+            }
+        }
+    }
+
+    ResolvedSummaries {
+        own,
+        extra,
+        all: resolved,
+        changed,
+        recomputed,
+    }
+}
+
+/// `CallGraph::consumes_changed` for any language's graph.
+pub(crate) fn consumes_changed_in(
+    import_bindings: &BTreeMap<String, BTreeMap<String, NodeKey>>,
+    file: &str,
+    changed: &BTreeSet<NodeKey>,
+) -> bool {
+    changed.iter().any(|n| n.0 == file)
+        || import_bindings
+            .get(file)
+            .is_some_and(|b| b.values().any(|t| changed.contains(t)))
+}
+
+/// `CallGraph::dependency_fingerprint` for any language's graph.
+pub(crate) fn dependency_fingerprint_in<'a>(
+    edges: &BTreeMap<NodeKey, BTreeMap<String, NodeKey>>,
+    nodes: impl Iterator<Item = &'a NodeKey>,
+    import_bindings: &BTreeMap<String, BTreeMap<String, NodeKey>>,
+    file: &str,
+) -> String {
+    let mut out = String::new();
+    for (node, targets) in edges.range((file.to_string(), String::new())..) {
+        if node.0 != file {
+            break;
+        }
+        out.push_str(&node.1);
+        out.push('>');
+        for (name, target) in targets {
+            out.push_str(&format!("{name}={}#{};", target.0, target.1));
+        }
+        out.push('\n');
+    }
+    for node in nodes.filter(|n| n.0 == file) {
+        out.push_str(&format!("fn {}\n", node.1));
+    }
+    if let Some(bindings) = import_bindings.get(file) {
+        for (name, target) in bindings {
+            out.push_str(&format!("import {name}={}#{}\n", target.0, target.1));
+        }
+    }
+    out
 }
 
 #[derive(Default)]
@@ -669,7 +881,7 @@ mod tests {
             level: 1,
         };
         assert_eq!(
-            resolve_target_file("pkg/a.py", &imp, &known),
+            resolve_target_file("pkg/a.py", &imp, &KnownFiles::new(&known)),
             Some("pkg/utils.py".to_string())
         );
     }
@@ -684,7 +896,7 @@ mod tests {
             level: 0,
         };
         assert_eq!(
-            resolve_target_file("main.py", &imp, &known),
+            resolve_target_file("main.py", &imp, &KnownFiles::new(&known)),
             None,
             "ambiguïté -> anti-FP, abandon"
         );

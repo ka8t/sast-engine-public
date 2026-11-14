@@ -693,10 +693,10 @@
       "benefit": "Schutz von Secrets in CI/CD-Logs und Fork-Umgebungen."
     },
     "workflow_not_in_codeowners": {
-      "name": "Workflows fehlen in CODEOWNERS",
-      "risk": "Ohne CODEOWNERS-Schutz kann jeder Mitwirkende CI/CD-Workflows ohne obligatorische Prüfung ändern.",
-      "solution": ".github/workflows/ @security-team in die CODEOWNERS-Datei eintragen.",
-      "benefit": "Obligatorische Prüfung für Pipeline-Änderungen, Reduzierung des Insider-Risikos."
+      "name": "Deployment-Workflows ohne Review änderbar",
+      "risk": "Ihre GitHub-Actions-Workflows (die Dateien in .github/workflows/, die Ihren Code bauen und ausliefern) können von jedem Mitwirkenden geändert werden, ohne dass jemand die Änderung prüft. So ließe sich unbemerkt ändern, wie Ihr Code ausgeliefert wird, oder seine Geheimnisse auslesen.",
+      "solution": "Legen Sie die Datei .github/CODEOWNERS an (GitHub liest darin, wer Änderungen an welchen Dateien freigeben muss) mit der Zeile /.github/workflows/ @ihr-team, und aktivieren Sie „Require review from Code Owners“ in den Branch-Schutzregeln des Repositorys.",
+      "benefit": "Jede Änderung daran, wie Ihr Code gebaut und ausgeliefert wird, muss von einer von Ihnen bestimmten Person freigegeben werden."
     },
     "gha_secret_in_log": {
       "name": "Secret in Workflow-Log ausgegeben",

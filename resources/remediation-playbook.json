@@ -6044,11 +6044,11 @@
       }
     },
     "workflow_not_in_codeowners": {
-      "title": "Workflows missing from CODEOWNERS",
+      "title": "Deployment workflows anyone can change without review",
       "severity": "MEDIUM",
       "category": "security",
       "language": "multi",
-      "risk": "Without CODEOWNERS protection, any contributor can modify CI/CD workflows without mandatory review.",
+      "risk": "Your GitHub Actions workflows (the files in .github/workflows/ that build and deploy your code) can be changed by any contributor without anyone reviewing the change. Someone could alter how your code is deployed, or read its secrets, unnoticed.",
       "steps": [
         {
           "order": 1,
@@ -6057,7 +6057,7 @@
         },
         {
           "order": 2,
-          "action": "Add .github/workflows/ @security-team to the CODEOWNERS file.",
+          "action": "Create the file .github/CODEOWNERS (GitHub reads in it who must approve changes to which files) with the line /.github/workflows/ @your-team, then turn on \"Require review from Code Owners\" in the repository's branch protection settings.",
           "type": "code_change"
         },
         {
@@ -6066,7 +6066,7 @@
           "type": "verification"
         }
       ],
-      "benefit": "Mandatory review for pipeline changes, reducing insider threat risk.",
+      "benefit": "Every change to how your code is built and deployed must be approved by a person you chose.",
       "references": {
         "iso27001": [
           "A.8.25",

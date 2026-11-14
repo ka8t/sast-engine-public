@@ -274,6 +274,9 @@ pub struct ScanConfig {
     pub custom_rules_dir: Option<PathBuf>,
     /// Path to `.sca-suppress.json`, if it exists.
     pub suppress_file: Option<PathBuf>,
+    /// Folder of the taint cache between scans (`scan_cache`); `None`
+    /// disables it (`--no-cache`, tests, the default).
+    pub cache_dir: Option<PathBuf>,
     /// Exclusion patterns (glob/directory/extension, cf. `discovery`).
     pub exclude_patterns: Vec<String>,
     /// Runs the audited project's test suite (opt-in, executes
@@ -414,6 +417,7 @@ impl Default for ScanConfig {
             target_languages: None,
             custom_rules_dir: None,
             suppress_file: None,
+            cache_dir: None,
             exclude_patterns: Vec::new(),
             with_tests: false,
             test_command: None,
@@ -530,6 +534,9 @@ pub struct ScanReport {
     /// per-language file count, computed at call time
     /// and therefore not `'static`.
     pub phase_timings: Vec<(String, std::time::Duration)>,
+    /// How much of each language's taint pass the cache spared (empty
+    /// without a cache).
+    pub cache_stats: Vec<crate::scan::scan_cache::CacheStat>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1116,6 +1123,150 @@ fn reads_language_files(config: &ScanConfig, tag: &str) -> bool {
     }
 }
 
+/// Findings of one taint rule on one file.
+type TaintFindings = Vec<crate::scan::dataflow::transfer::Finding>;
+
+/// Runs every taint rule of one language on its files, reusing the taint
+/// cache of the previous scan (`scan_cache`, issue #183).
+///
+/// Shared by the five taint passes; each gives what is specific to its
+/// language: `dependency_fingerprint` (what a file resolves from the
+/// others), `resolve` (the call graph's incremental summary resolution),
+/// `consumes_changed` (whether a file reads a summary that changed) and
+/// `run_file` (the analysis of one file with its summaries). A file keeps
+/// its previous findings for a rule when neither its text, nor what it
+/// resolves, nor any summary it reads changed; the result is the
+/// per-rule, per-file findings each pass already merged, in the same
+/// order, so the report is the one of a full scan.
+#[allow(clippy::too_many_arguments)]
+fn cached_taint_pass(
+    language: &str,
+    files: &[&ParsedFile],
+    rule_jsons: &[&serde_json::Value],
+    config: &ScanConfig,
+    dependency_fingerprint: &(dyn Fn(&str) -> String + Sync),
+    resolve: &(dyn Fn(
+        &crate::scan::dataflow::transfer::RuleSpecs,
+        Option<&crate::scan::dataflow::call_graph::SummaryReuse>,
+    ) -> crate::scan::dataflow::call_graph::ResolvedSummaries
+          + Sync),
+    consumes_changed: &(dyn Fn(&str, &BTreeSet<crate::scan::dataflow::call_graph::NodeKey>) -> bool
+          + Sync),
+    run_file: &(dyn Fn(
+        &ParsedFile,
+        &mut crate::scan::dataflow::transfer::RuleSpecs,
+        &crate::scan::dataflow::call_graph::ResolvedSummaries,
+    ) -> TaintFindings
+          + Sync),
+    cache_stats: &mut Vec<crate::scan::scan_cache::CacheStat>,
+) -> Vec<Option<Vec<TaintFindings>>> {
+    use crate::scan::scan_cache::{CacheKey, FileState, RuleState, TaintCache, sha256_hex};
+    let cache_key = CacheKey::current(&config.lang);
+    let cache_path = config.cache_dir.as_ref().map(|d| TaintCache::path(d, language));
+    let previous = cache_path.as_ref().and_then(|p| TaintCache::load(p, &cache_key));
+    let file_states: BTreeMap<String, FileState> = files
+        .iter()
+        .map(|pf| {
+            (
+                pf.rel_path.clone(),
+                FileState {
+                    hash: sha256_hex(&pf.source_bytes),
+                    deps: sha256_hex(dependency_fingerprint(&pf.rel_path).as_bytes()),
+                },
+            )
+        })
+        .collect();
+    let dirty: BTreeSet<String> = previous.as_ref().map_or_else(
+        || file_states.keys().cloned().collect(),
+        |cache| cache.dirty_files(&file_states),
+    );
+
+    // Per rule: its per-file findings, id, cache entry and analyses run.
+    type RuleRun = (Vec<TaintFindings>, String, RuleState, usize);
+    let runs: Vec<Option<RuleRun>> = rule_jsons
+        .par_iter()
+        .map(|rule_json| {
+            // `Some` as soon as the rule has a source and a sink, whatever
+            // its `patterns` (a `regex+taint` rule goes through both phases).
+            let base_specs = rule_json_to_specs(rule_json, &config.lang)?;
+            let rule_hash =
+                sha256_hex(serde_json::to_string(rule_json).unwrap_or_default().as_bytes());
+            let prior = previous
+                .as_ref()
+                .and_then(|c| c.rules.get(&base_specs.rule_id))
+                .filter(|r| r.rule_hash == rule_hash);
+            let prior_summaries = prior.map(RuleState::previous_summaries);
+            let reuse = prior_summaries.as_ref().map(|previous| {
+                crate::scan::dataflow::call_graph::SummaryReuse {
+                    previous,
+                    dirty_files: &dirty,
+                }
+            });
+            let resolved = resolve(&base_specs, reuse.as_ref());
+            // Cloned once per rule, not per file: only the per-file parts
+            // (summaries, type map) change between files.
+            let mut node_specs = base_specs.clone();
+            let mut analysed = 0usize;
+            let mut per_file = Vec::with_capacity(files.len());
+            for pf in files {
+                if let Some(prior) = prior
+                    && !dirty.contains(&pf.rel_path)
+                    && !consumes_changed(&pf.rel_path, &resolved.changed)
+                    && let Some(findings) = prior.findings.get(&pf.rel_path)
+                {
+                    per_file.push(findings.clone());
+                    continue;
+                }
+                analysed += 1;
+                per_file.push(run_file(pf, &mut node_specs, &resolved));
+            }
+            let state = RuleState {
+                rule_hash,
+                summaries: resolved
+                    .all
+                    .iter()
+                    .map(|((f, n), s)| (f.clone(), n.clone(), (**s).clone()))
+                    .collect(),
+                findings: files
+                    .iter()
+                    .zip(&per_file)
+                    .map(|(pf, f)| (pf.rel_path.clone(), f.clone()))
+                    .collect(),
+            };
+            Some((per_file, base_specs.rule_id.clone(), state, analysed))
+        })
+        .collect();
+
+    if let Some(path) = &cache_path {
+        let mut cache = TaintCache::new(cache_key);
+        cache.files = file_states;
+        let mut analysed = 0;
+        let mut total = 0;
+        for (_, rule_id, state, n) in runs.iter().flatten() {
+            cache.rules.insert(rule_id.clone(), state.clone());
+            analysed += n;
+            total += files.len();
+        }
+        // Nothing redone and no file changed: the cache on disk is already
+        // this one, rewriting it would only cost time. A cache that cannot
+        // be written only costs the next scan its speed: never an error of
+        // this one.
+        if previous.is_none() || !dirty.is_empty() || analysed > 0 {
+            let _ = cache.save(path);
+        }
+        cache_stats.push(crate::scan::scan_cache::CacheStat {
+            language: language.to_string(),
+            files: files.len(),
+            dirty: dirty.len(),
+            analysed,
+            total,
+        });
+    }
+    runs.into_iter()
+        .map(|run| run.map(|(per_file, _, _, _)| per_file))
+        .collect()
+}
+
 /// Runs a full scan on `config.root`.
 ///
 /// Three phases:
@@ -1444,6 +1595,7 @@ pub fn run_scan(config: &ScanConfig) -> ScanReport {
     );
 
     let mut all_findings: Vec<ReportFinding> = Vec::new();
+    let mut cache_stats: Vec<crate::scan::scan_cache::CacheStat> = Vec::new();
 
     // Phase B — regex/file_contains, per file. A rule only applies to
     // files of ITS declared language (`rule_json["language"]`), now
@@ -1456,40 +1608,104 @@ pub fn run_scan(config: &ScanConfig) -> ScanReport {
     // flattening results in `parsed_files` order, for a report
     // strictly identical to the sequential version.
     let t_phase_b = std::time::Instant::now();
-    let per_file_findings: Vec<Vec<ReportFinding>> = parsed_files
+    // Pattern cache (`scan_cache`): a file keeps its raw findings when its
+    // bytes, the governance files around it and the loaded rules are those
+    // of the previous scan. Suppressions are applied after, on every scan.
+    use crate::scan::scan_cache::{CacheKey, PatternCache, PatternFileState, sha256_hex};
+    let pattern_key = CacheKey::current(&config.lang);
+    let rules_hash = sha256_hex(serde_json::to_string(&rule_jsons).unwrap_or_default().as_bytes());
+    let governance_names: Vec<String> = rule_jsons
+        .iter()
+        .filter_map(|r| r.get("file_contains")?.get("not_path_has_file")?.as_array())
+        .flatten()
+        .filter_map(|v| v.as_str().map(str::to_string))
+        .collect::<BTreeSet<String>>()
+        .into_iter()
+        .collect();
+    let pattern_cache_path = config.cache_dir.as_ref().map(|d| PatternCache::path(d));
+    let pattern_previous = pattern_cache_path
+        .as_ref()
+        .and_then(|p| PatternCache::load(p, &pattern_key, &rules_hash));
+    let per_file_raw: Vec<(PatternFileState, bool)> = parsed_files
         .par_iter()
         .map(|pf| {
-            let mut out = Vec::new();
-            for rule_json in &rule_jsons {
+            let hash = sha256_hex(&pf.source_bytes);
+            let governance = crate::scan::engine::file_contains::governance_fingerprint(
+                &pf.filepath,
+                &governance_names,
+            );
+            if let Some(previous) = pattern_previous.as_ref().and_then(|c| c.files.get(&pf.rel_path))
+                && previous.hash == hash
+                && previous.governance == governance
+            {
+                return (previous.clone(), false);
+            }
+            let mut findings = Vec::new();
+            for (index, rule_json) in rule_jsons.iter().enumerate() {
                 if rule_json.get("language").and_then(|v| v.as_str())
                     != Some(pf.language.rule_tag())
                 {
                     continue;
                 }
-                let DispatchOutcome::Findings(findings) =
+                let DispatchOutcome::Findings(found) =
                     dispatch_rule(rule_json, &pf.filepath, &pf.all_lines, &pf.source_text)
                 else {
                     continue; // Taint/Ast/Hook: handled elsewhere (Phase C) or out of scope.
                 };
-                for f in findings {
-                    if suppressions.is_suppressed(&f.rule_id, &pf.rel_path, &f.code) {
-                        continue;
-                    }
-                    if is_inline_ignored(&f.code, &f.rule_id) {
-                        continue;
-                    }
-                    out.push(engine_finding_to_report(
-                        &f,
-                        rule_json,
-                        &pf.rel_path,
-                        &pf.source_lines_plain,
-                        &config.lang,
-                    ));
+                findings.extend(found.into_iter().map(|f| (index, f)));
+            }
+            (
+                PatternFileState {
+                    hash,
+                    governance,
+                    findings,
+                },
+                true,
+            )
+        })
+        .collect();
+    let per_file_findings: Vec<Vec<ReportFinding>> = parsed_files
+        .par_iter()
+        .zip(per_file_raw.par_iter())
+        .map(|(pf, (state, _))| {
+            let mut out = Vec::new();
+            for (index, f) in &state.findings {
+                let rule_json = &rule_jsons[*index];
+                if suppressions.is_suppressed(&f.rule_id, &pf.rel_path, &f.code) {
+                    continue;
                 }
+                if is_inline_ignored(&f.code, &f.rule_id) {
+                    continue;
+                }
+                out.push(engine_finding_to_report(
+                    f,
+                    rule_json,
+                    &pf.rel_path,
+                    &pf.source_lines_plain,
+                    &config.lang,
+                ));
             }
             out
         })
         .collect();
+    if let Some(path) = &pattern_cache_path {
+        let mut cache = PatternCache::new(pattern_key, rules_hash);
+        let mut redone = 0;
+        for (pf, (state, recomputed)) in parsed_files.iter().zip(per_file_raw) {
+            redone += usize::from(recomputed);
+            cache.files.insert(pf.rel_path.clone(), state);
+        }
+        if pattern_previous.is_none() || redone > 0 {
+            let _ = cache.save(path);
+        }
+        cache_stats.push(crate::scan::scan_cache::CacheStat {
+            language: "patterns".to_string(),
+            files: parsed_files.len(),
+            dirty: redone,
+            analysed: redone,
+            total: parsed_files.len(),
+        });
+    }
     for findings in per_file_findings {
         all_findings.extend(findings);
     }
@@ -1556,54 +1772,34 @@ pub fn run_scan(config: &ScanConfig) -> ScanReport {
                     == Some(SourceLanguage::Python.rule_tag())
             })
             .collect();
-        let per_rule_results: Vec<Option<Vec<Vec<crate::scan::dataflow::transfer::Finding>>>> =
-            python_rule_jsons
-                .par_iter()
-                .map(|rule_json| {
-                    // `rule_json_to_specs` returns `Some` as soon as the rule
-                    // has at least one source AND one sink — independently
-                    // of `patterns` (a `regex+taint` rule therefore goes
-                    // through BOTH pipelines, Phase B and Phase C, as on
-                    // the Python side).
-                    let base_specs = rule_json_to_specs(rule_json, &config.lang)?;
-                    let (own, extra) =
-                        call_graph.resolve_summaries(&base_specs, Some(&py_source_lines_by_file));
-                    // Cloned ONCE per rule (not per file) — only
-                    // `.summaries` varies per file. Found on 2026-08-26
-                    // while investigating slowness reported by the maintainer on a
-                    // large Java corpus (same antipattern, see the Java
-                    // block below and `java_call_graph.rs::resolve_summaries`
-                    // fixed just before): `base_specs.clone()` (with its
-                    // sources/sinks/sanitizers/passthroughs `Regex`) used to
-                    // be redone for every file, i.e. (files × rules) times
-                    // in total — pure waste, `sources`/`sinks`/
-                    // `sanitizers`/`passthroughs` only depend on the rule,
-                    // never on the file.
-                    let mut node_specs = base_specs.clone();
-                    let per_file: Vec<Vec<crate::scan::dataflow::transfer::Finding>> = python_files
-                        .iter()
-                        .map(|pf| {
-                            // File's own summaries take priority over
-                            // resolved imports (mirrors
-                            // `merged.update(summaries)` on the
-                            // `dataflow_taint.py` side: local > import).
-                            let mut summaries =
-                                extra.get(&pf.rel_path).cloned().unwrap_or_default();
-                            if let Some(own_here) = own.get(&pf.rel_path) {
-                                summaries.extend(own_here.clone());
-                            }
-                            node_specs.summaries = summaries;
-                            run_taint_rule(
-                                &pf.tree,
-                                &pf.source_bytes,
-                                &node_specs,
-                                Some(&pf.source_lines_plain),
-                            )
-                        })
-                        .collect();
-                    Some(per_file)
-                })
-                .collect();
+        let per_rule_results = cached_taint_pass(
+            "python",
+            &python_files,
+            &python_rule_jsons,
+            config,
+            &|file| call_graph.dependency_fingerprint(file),
+            &|specs, reuse| {
+                call_graph.resolve_summaries_incremental(specs, Some(&py_source_lines_by_file), reuse)
+            },
+            &|file, changed| call_graph.consumes_changed(file, changed),
+            &|pf, node_specs, resolved| {
+                // File's own summaries take priority over resolved
+                // imports (mirrors `merged.update(summaries)` on the
+                // `dataflow_taint.py` side: local > import).
+                let mut summaries = resolved.extra.get(&pf.rel_path).cloned().unwrap_or_default();
+                if let Some(own_here) = resolved.own.get(&pf.rel_path) {
+                    summaries.extend(own_here.clone());
+                }
+                node_specs.summaries = summaries;
+                run_taint_rule(
+                    &pf.tree,
+                    &pf.source_bytes,
+                    node_specs,
+                    Some(&pf.source_lines_plain),
+                )
+            },
+            &mut cache_stats,
+        );
 
         for (rule_json, maybe_per_file) in python_rule_jsons.iter().zip(per_rule_results) {
             let Some(per_file) = maybe_per_file else {
@@ -1697,44 +1893,35 @@ pub fn run_scan(config: &ScanConfig) -> ScanReport {
                 r.get("language").and_then(|v| v.as_str()) == Some(SourceLanguage::Java.rule_tag())
             })
             .collect();
-        let java_per_rule_results: Vec<Option<Vec<Vec<crate::scan::dataflow::transfer::Finding>>>> =
-            java_rule_jsons
-                .par_iter()
-                .map(|rule_json| {
-                    let base_specs = rule_json_to_specs(rule_json, &config.lang)?;
-                    let (own, extra) = java_call_graph
-                        .resolve_summaries(&base_specs, Some(&java_source_lines_by_file));
-                    // Cloned ONCE per rule — see the equivalent comment in
-                    // the Python block above. It was THIS clone, repeated
-                    // per file (40,000 times on a corpus of 2000 files ×
-                    // 20 rules), that dominated the real cost of the Java
-                    // phase on OWASP BenchmarkJava — not `resolve_summaries`
-                    // itself (already fixed, only a marginal gain).
-                    let mut node_specs = base_specs.clone();
-                    let per_file: Vec<Vec<crate::scan::dataflow::transfer::Finding>> = java_files
-                        .iter()
-                        .map(|pf| {
-                            let mut summaries =
-                                extra.get(&pf.rel_path).cloned().unwrap_or_default();
-                            if let Some(own_here) = own.get(&pf.rel_path) {
-                                summaries.extend(own_here.clone());
-                            }
-                            node_specs.summaries = summaries;
-                            node_specs.type_map = java_type_map_by_file
-                                .get(&pf.rel_path)
-                                .cloned()
-                                .unwrap_or_default();
-                            run_taint_rule_java(
-                                pf.tree.root_node(),
-                                &pf.source_bytes,
-                                &node_specs,
-                                Some(&pf.source_lines_plain),
-                            )
-                        })
-                        .collect();
-                    Some(per_file)
-                })
-                .collect();
+        let java_per_rule_results = cached_taint_pass(
+            "java",
+            &java_files,
+            &java_rule_jsons,
+            config,
+            &|file| java_call_graph.dependency_fingerprint(file),
+            &|specs, reuse| {
+                java_call_graph.resolve_summaries_incremental(specs, Some(&java_source_lines_by_file), reuse)
+            },
+            &|file, changed| java_call_graph.consumes_changed(file, changed),
+            &|pf, node_specs, resolved| {
+                let mut summaries = resolved.extra.get(&pf.rel_path).cloned().unwrap_or_default();
+                if let Some(own_here) = resolved.own.get(&pf.rel_path) {
+                    summaries.extend(own_here.clone());
+                }
+                node_specs.summaries = summaries;
+                node_specs.type_map = java_type_map_by_file
+                    .get(&pf.rel_path)
+                    .cloned()
+                    .unwrap_or_default();
+                run_taint_rule_java(
+                    pf.tree.root_node(),
+                    &pf.source_bytes,
+                    node_specs,
+                    Some(&pf.source_lines_plain),
+                )
+            },
+            &mut cache_stats,
+        );
 
         for (rule_json, maybe_per_file) in java_rule_jsons.iter().zip(java_per_rule_results) {
             let Some(per_file) = maybe_per_file else {
@@ -1824,37 +2011,29 @@ pub fn run_scan(config: &ScanConfig) -> ScanReport {
                     == Some(SourceLanguage::JavaScript.rule_tag())
             })
             .collect();
-        let js_per_rule_results: Vec<Option<Vec<Vec<crate::scan::dataflow::transfer::Finding>>>> =
-            js_rule_jsons
-                .par_iter()
-                .map(|rule_json| {
-                    let base_specs = rule_json_to_specs(rule_json, &config.lang)?;
-                    let (own, extra) = js_call_graph
-                        .resolve_summaries(&base_specs, Some(&js_source_lines_by_file));
-                    let mut node_specs = base_specs.clone();
-                    let per_file: Vec<Vec<crate::scan::dataflow::transfer::Finding>> = js_files
-                        .iter()
-                        .map(|pf| {
-                            // File's own summaries take priority over
-                            // resolved imports (own > extra, same
-                            // convention as the Python block).
-                            let mut summaries =
-                                extra.get(&pf.rel_path).cloned().unwrap_or_default();
-                            if let Some(own_here) = own.get(&pf.rel_path) {
-                                summaries.extend(own_here.clone());
-                            }
-                            node_specs.summaries = summaries;
-                            run_taint_rule_js(
-                                pf.tree.root_node(),
-                                &pf.source_bytes,
-                                &node_specs,
-                                Some(&pf.source_lines_plain),
-                            )
-                        })
-                        .collect();
-                    Some(per_file)
-                })
-                .collect();
+        let js_per_rule_results = cached_taint_pass(
+            "javascript",
+            &js_files,
+            &js_rule_jsons,
+            config,
+            &|file| js_call_graph.dependency_fingerprint(file),
+            &|specs, reuse| js_call_graph.resolve_summaries_incremental(specs, Some(&js_source_lines_by_file), reuse),
+            &|file, changed| js_call_graph.consumes_changed(file, changed),
+            &|pf, node_specs, resolved| {
+                let mut summaries = resolved.extra.get(&pf.rel_path).cloned().unwrap_or_default();
+                if let Some(own_here) = resolved.own.get(&pf.rel_path) {
+                    summaries.extend(own_here.clone());
+                }
+                node_specs.summaries = summaries;
+                run_taint_rule_js(
+                    pf.tree.root_node(),
+                    &pf.source_bytes,
+                    node_specs,
+                    Some(&pf.source_lines_plain),
+                )
+            },
+            &mut cache_stats,
+        );
 
         for (rule_json, maybe_per_file) in js_rule_jsons.iter().zip(js_per_rule_results) {
             let Some(per_file) = maybe_per_file else {
@@ -1935,34 +2114,29 @@ pub fn run_scan(config: &ScanConfig) -> ScanReport {
                 r.get("language").and_then(|v| v.as_str()) == Some(SourceLanguage::Php.rule_tag())
             })
             .collect();
-        let php_per_rule_results: Vec<Option<Vec<Vec<crate::scan::dataflow::transfer::Finding>>>> =
-            php_rule_jsons
-                .par_iter()
-                .map(|rule_json| {
-                    let base_specs = rule_json_to_specs(rule_json, &config.lang)?;
-                    let (own, extra) = php_call_graph
-                        .resolve_summaries(&base_specs, Some(&php_source_lines_by_file));
-                    let mut node_specs = base_specs.clone();
-                    let per_file: Vec<Vec<crate::scan::dataflow::transfer::Finding>> = php_files
-                        .iter()
-                        .map(|pf| {
-                            let mut summaries =
-                                extra.get(&pf.rel_path).cloned().unwrap_or_default();
-                            if let Some(own_here) = own.get(&pf.rel_path) {
-                                summaries.extend(own_here.clone());
-                            }
-                            node_specs.summaries = summaries;
-                            run_taint_rule_php(
-                                pf.tree.root_node(),
-                                &pf.source_bytes,
-                                &node_specs,
-                                Some(&pf.source_lines_plain),
-                            )
-                        })
-                        .collect();
-                    Some(per_file)
-                })
-                .collect();
+        let php_per_rule_results = cached_taint_pass(
+            "php",
+            &php_files,
+            &php_rule_jsons,
+            config,
+            &|file| php_call_graph.dependency_fingerprint(file),
+            &|specs, reuse| php_call_graph.resolve_summaries_incremental(specs, Some(&php_source_lines_by_file), reuse),
+            &|file, changed| php_call_graph.consumes_changed(file, changed),
+            &|pf, node_specs, resolved| {
+                let mut summaries = resolved.extra.get(&pf.rel_path).cloned().unwrap_or_default();
+                if let Some(own_here) = resolved.own.get(&pf.rel_path) {
+                    summaries.extend(own_here.clone());
+                }
+                node_specs.summaries = summaries;
+                run_taint_rule_php(
+                    pf.tree.root_node(),
+                    &pf.source_bytes,
+                    node_specs,
+                    Some(&pf.source_lines_plain),
+                )
+            },
+            &mut cache_stats,
+        );
 
         for (rule_json, maybe_per_file) in php_rule_jsons.iter().zip(php_per_rule_results) {
             let Some(per_file) = maybe_per_file else {
@@ -2039,37 +2213,43 @@ pub fn run_scan(config: &ScanConfig) -> ScanReport {
                     == Some(SourceLanguage::CSharp.rule_tag())
             })
             .collect();
-        let csharp_per_rule_results: Vec<
-            Option<Vec<Vec<crate::scan::dataflow::transfer::Finding>>>,
-        > = csharp_rule_jsons
-            .par_iter()
-            .map(|rule_json| {
-                let base_specs = rule_json_to_specs(rule_json, &config.lang)?;
-                let mut node_specs = base_specs.clone();
-                let per_file: Vec<Vec<crate::scan::dataflow::transfer::Finding>> = csharp_files
-                    .iter()
-                    .map(|pf| {
-                        node_specs.summaries = compute_csharp_file_summaries(
-                            pf.tree.root_node(),
-                            &base_specs,
-                            &pf.source_bytes,
-                            Some(&pf.source_lines_plain),
-                        );
-                        node_specs.type_map = csharp_type_map_by_file
-                            .get(&pf.rel_path)
-                            .cloned()
-                            .unwrap_or_default();
-                        run_taint_rule_csharp(
-                            pf.tree.root_node(),
-                            &pf.source_bytes,
-                            &node_specs,
-                            Some(&pf.source_lines_plain),
-                        )
-                    })
-                    .collect();
-                Some(per_file)
-            })
-            .collect();
+        // C# summaries are computed per file (no call graph across files):
+        // a file only depends on itself, so its fingerprint is empty and no
+        // summary is shared between files.
+        let csharp_per_rule_results = cached_taint_pass(
+            "csharp",
+            &csharp_files,
+            &csharp_rule_jsons,
+            config,
+            &|_| String::new(),
+            &|_, _| crate::scan::dataflow::call_graph::ResolvedSummaries::default(),
+            &|_, _| false,
+            &|pf, node_specs, _| {
+                // Back to the rule's own specs (no summaries, no types)
+                // before computing this file's summaries, as a fresh
+                // `base_specs` would be.
+                node_specs.summaries = Default::default();
+                node_specs.type_map = Default::default();
+                let summaries = compute_csharp_file_summaries(
+                    pf.tree.root_node(),
+                    node_specs,
+                    &pf.source_bytes,
+                    Some(&pf.source_lines_plain),
+                );
+                node_specs.summaries = summaries;
+                node_specs.type_map = csharp_type_map_by_file
+                    .get(&pf.rel_path)
+                    .cloned()
+                    .unwrap_or_default();
+                run_taint_rule_csharp(
+                    pf.tree.root_node(),
+                    &pf.source_bytes,
+                    node_specs,
+                    Some(&pf.source_lines_plain),
+                )
+            },
+            &mut cache_stats,
+        );
 
         for (rule_json, maybe_per_file) in csharp_rule_jsons.iter().zip(csharp_per_rule_results) {
             let Some(per_file) = maybe_per_file else {
@@ -2352,6 +2532,7 @@ pub fn run_scan(config: &ScanConfig) -> ScanReport {
         export_path,
         languages,
         phase_timings,
+        cache_stats,
     }
 }
 
@@ -2674,6 +2855,185 @@ mod tests {
             report.findings.is_empty(),
             "finding supprimé par .sca-suppress.json"
         );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// Findings as comparable lines: file, line, rule, severity.
+    fn finding_keys(report: &ScanReport) -> Vec<String> {
+        let mut keys: Vec<String> = report
+            .findings
+            .iter()
+            .map(|f| format!("{}:{}:{}:{}", f.file, f.line, f.rule_key, f.severity))
+            .collect();
+        keys.sort();
+        keys
+    }
+
+    #[test]
+    fn test_taint_cache_follows_a_change_into_an_unchanged_caller_file() {
+        // `router.py` never changes; only `helpers.py` does. A cached scan
+        // must report what a full scan reports at every step, including the
+        // finding that appears in, then leaves, the unchanged caller file.
+        let root = temp_dir();
+        let rules_dir = root.join("rules");
+        std::fs::create_dir_all(&rules_dir).unwrap();
+        write(
+            &rules_dir,
+            "taint_cmd.sca",
+            "rule taint_cmd\n  language  python\n  category  security\n  severity  HIGH\n  source  input\\s*\\(  kind=cli\n  sink    os\\.system\\s*\\(\nend\n",
+        );
+        write(
+            &root,
+            "router.py",
+            "from helpers import run\n\ndef handler():\n    cmd = input()\n    run(cmd)\n",
+        );
+        let safe = "import os\n\ndef run(cmd):\n    os.system('ls')\n";
+        let unsafe_ = "import os\n\ndef run(cmd):\n    os.system(cmd)\n";
+        write(&root, "helpers.py", safe);
+        let cache_dir = root.join("cache");
+        let config = |cache: bool| ScanConfig {
+            root: root.clone(),
+            rules_path: rules_dir.clone(),
+            exclude_patterns: vec!["cache/".to_string()],
+            cache_dir: cache.then(|| cache_dir.clone()),
+            ..ScanConfig::default()
+        };
+        let mut seen_router_finding = false;
+        for (step, helpers) in [safe, unsafe_, unsafe_, safe].iter().enumerate() {
+            write(&root, "helpers.py", helpers);
+            let cached = run_scan(&config(true));
+            let full = run_scan(&config(false));
+            assert_eq!(finding_keys(&cached), finding_keys(&full), "step {step}");
+            seen_router_finding |= cached.findings.iter().any(|f| f.file == "router.py");
+            let stat = &cached.cache_stats[0];
+            if step == 2 {
+                assert_eq!((stat.dirty, stat.analysed), (0, 0), "unchanged: all reused");
+            }
+        }
+        assert!(seen_router_finding, "the caller file got the cross-file finding");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// Scans `files` four times while `callee` goes safe → unsafe →
+    /// unsafe → safe, `caller` never changing: the cached scan must match
+    /// a full scan at every step, reuse everything on the unchanged step,
+    /// and the cross-file finding must show up in `caller`.
+    fn assert_cache_follows_cross_file(
+        rule: &str,
+        caller: (&str, &str),
+        callee: (&str, &str, &str),
+    ) {
+        let root = temp_dir();
+        let rules_dir = root.join("rules");
+        std::fs::create_dir_all(&rules_dir).unwrap();
+        write(&rules_dir, "rule.sca", rule);
+        write(&root, caller.0, caller.1);
+        let cache_dir = root.join("cache");
+        let config = |cache: bool| ScanConfig {
+            root: root.clone(),
+            rules_path: rules_dir.clone(),
+            exclude_patterns: vec!["cache/".to_string()],
+            cache_dir: cache.then(|| cache_dir.clone()),
+            ..ScanConfig::default()
+        };
+        let (path, safe, unsafe_) = callee;
+        let mut seen_caller_finding = false;
+        for (step, text) in [safe, unsafe_, unsafe_, safe].iter().enumerate() {
+            write(&root, path, text);
+            let cached = run_scan(&config(true));
+            let full = run_scan(&config(false));
+            assert_eq!(finding_keys(&cached), finding_keys(&full), "{path} step {step}");
+            seen_caller_finding |= cached.findings.iter().any(|f| f.file == caller.0);
+            if step == 2 {
+                let stat = cached.cache_stats.iter().find(|s| s.language != "patterns").unwrap();
+                assert_eq!((stat.dirty, stat.analysed), (0, 0), "{path}: unchanged, all reused");
+            }
+        }
+        assert!(seen_caller_finding, "{}: the cross-file finding reached the caller", caller.0);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn test_taint_cache_follows_cross_file_changes_in_js() {
+        assert_cache_follows_cross_file(
+            "rule taint_q\n  language  javascript\n  category  security\n  severity  HIGH\n  source  readInput\\s*\\(  kind=cli\n  sink    db\\.query\\s*\\(\nend\n",
+            (
+                "handler.js",
+                "const { run } = require('./helpers');\nfunction handler() {\n  const cmd = readInput();\n  run(cmd);\n}\n",
+            ),
+            (
+                "helpers.js",
+                "function run(cmd) {\n  db.query('x');\n}\n",
+                "function run(cmd) {\n  db.query(cmd);\n}\n",
+            ),
+        );
+    }
+
+    #[test]
+    fn test_taint_cache_follows_cross_file_changes_in_php() {
+        assert_cache_follows_cross_file(
+            "rule taint_q\n  language  php\n  category  security\n  severity  HIGH\n  source  readInput\\s*\\(  kind=cli\n  sink    \\$db->query\\s*\\(\nend\n",
+            (
+                "handler.php",
+                "<?php\nrequire './helpers.php';\nfunction handler() {\n  $cmd = readInput();\n  run($cmd);\n}\n",
+            ),
+            (
+                "helpers.php",
+                "<?php\nfunction run($cmd) {\n  $db->query('x');\n}\n",
+                "<?php\nfunction run($cmd) {\n  $db->query($cmd);\n}\n",
+            ),
+        );
+    }
+
+    #[test]
+    fn test_taint_cache_follows_cross_file_changes_in_java() {
+        assert_cache_follows_cross_file(
+            "rule taint_q\n  language  java\n  category  security\n  severity  HIGH\n  source  request\\.getParameter\\s*\\(  kind=http\n  sink    stmt\\.executeQuery\\s*\\(\nend\n",
+            (
+                "Api.java",
+                "package app;\nclass Api {\n  void handle(HttpServletRequest request) {\n    String cmd = request.getParameter(\"q\");\n    Helper h = new Helper();\n    h.run(cmd);\n  }\n}\n",
+            ),
+            (
+                "Helper.java",
+                "package app;\nclass Helper {\n  void run(String cmd) {\n    stmt.executeQuery(\"x\");\n  }\n}\n",
+                "package app;\nclass Helper {\n  void run(String cmd) {\n    stmt.executeQuery(cmd);\n  }\n}\n",
+            ),
+        );
+    }
+
+    #[test]
+    fn test_taint_cache_csharp_redoes_only_the_changed_file() {
+        let root = temp_dir();
+        let rules_dir = root.join("rules");
+        std::fs::create_dir_all(&rules_dir).unwrap();
+        write(
+            &rules_dir,
+            "rule.sca",
+            "rule taint_q\n  language  csharp\n  category  security\n  severity  HIGH\n  source  Request\\.Query\\[  kind=http\n  sink    Process\\.Start\\s*\\(\nend\n",
+        );
+        let body = |arg: &str| {
+            format!(
+                "class C {{\n  void M() {{\n    var cmd = Request.Query[\"q\"];\n    Process.Start({arg});\n  }}\n}}\n"
+            )
+        };
+        write(&root, "A.cs", &body("cmd"));
+        write(&root, "B.cs", &body("\"ls\""));
+        let cache_dir = root.join("cache");
+        let config = |cache: bool| ScanConfig {
+            root: root.clone(),
+            rules_path: rules_dir.clone(),
+            exclude_patterns: vec!["cache/".to_string()],
+            cache_dir: cache.then(|| cache_dir.clone()),
+            ..ScanConfig::default()
+        };
+        run_scan(&config(true));
+        write(&root, "B.cs", &body("cmd"));
+        let cached = run_scan(&config(true));
+        let full = run_scan(&config(false));
+        assert_eq!(finding_keys(&cached), finding_keys(&full));
+        assert_eq!(cached.findings.iter().filter(|f| f.rule_key == "taint_q").count(), 2);
+        let stat = cached.cache_stats.iter().find(|s| s.language == "csharp").unwrap();
+        assert_eq!((stat.dirty, stat.analysed), (1, 1), "only B.cs redone");
         std::fs::remove_dir_all(&root).ok();
     }
 

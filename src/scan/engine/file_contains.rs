@@ -85,6 +85,16 @@ pub fn matches(
     true
 }
 
+/// Which of `names` the governance check of `filepath` finds, as one
+/// `0`/`1` per name: the only thing outside the file that a pattern rule
+/// reads, hence part of the file's key in the scan cache (`scan_cache`).
+pub fn governance_fingerprint(filepath: &Path, names: &[String]) -> String {
+    names
+        .iter()
+        .map(|n| if governance_file_found(filepath, std::slice::from_ref(n)) { '1' } else { '0' })
+        .collect()
+}
+
 /// Walks up the directory tree from `filepath`'s folder (up to 5
 /// levels) looking for one of the `check_files` — mirrors the
 /// Python loop, with an identical anti-traversal guard (rejects any name

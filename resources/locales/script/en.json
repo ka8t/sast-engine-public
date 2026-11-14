@@ -377,5 +377,7 @@
   "scan_languages_unknown": "Warning: value(s) of \"languages\" in audit.config.json that name no supported language, ignored: {languages}",
   "scan_unknown_format": "Error: unknown format: {format} (expected: text|sarif|html)",
   "scan_internal_error": "Internal error: {error}",
-  "scan_rule_skipped": "Rule skipped ({path}): {error}"
+  "scan_rule_skipped": "Rule skipped ({path}): {error}",
+  "scan_cache_line": "Cache ({language}): {dirty}/{files} file(s) changed since the last scan, {analysed}/{total} taint analyses redone.",
+  "scan_cache_patterns_line": "Cache (pattern rules): {analysed}/{files} file(s) analysed again, the others unchanged since the last scan."
 }

@@ -20,7 +20,7 @@ pub mod taint;
 /// (production/test/vendor/...) are deliberately absent: they belong
 /// to the orchestrator (Step 5), not the matcher — cf.
 /// `Audit/sca/runner.py::_add_finding`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Finding {
     pub rule_id: String,
     pub category: String,

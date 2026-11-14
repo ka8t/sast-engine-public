@@ -8,3 +8,4 @@ pub mod discovery;
 pub mod engine;
 pub mod orchestrator;
 pub mod parser;
+pub mod scan_cache;

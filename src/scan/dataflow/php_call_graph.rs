@@ -408,75 +408,52 @@ impl<'tree> PhpCallGraph<'tree> {
         base_specs: &RuleSpecs,
         source_lines_by_file: Option<&BTreeMap<String, Vec<String>>>,
     ) -> (SummariesByFile, SummariesByFile) {
+        let resolved = self.resolve_summaries_incremental(base_specs, source_lines_by_file, None);
+        (resolved.own, resolved.extra)
+    }
+
+    /// `resolve_summaries`, reusing the summaries of a previous scan where
+    /// they cannot have changed: see
+    /// `call_graph::CallGraph::resolve_summaries_incremental` (same
+    /// algorithm, shared through `call_graph::resolve_incremental`).
+    pub fn resolve_summaries_incremental(
+        &self,
+        base_specs: &RuleSpecs,
+        source_lines_by_file: Option<&BTreeMap<String, Vec<String>>>,
+        reuse: Option<&super::call_graph::SummaryReuse>,
+    ) -> super::call_graph::ResolvedSummaries {
         let empty_lines = BTreeMap::new();
         let source_lines_by_file = source_lines_by_file.unwrap_or(&empty_lines);
-
         let sccs = self.strongly_connected_components();
-        let mut resolved: BTreeMap<NodeKey, Arc<FunctionSummary>> = BTreeMap::new();
-        let mut own: SummariesByFile = BTreeMap::new();
+        super::call_graph::resolve_incremental(
+            sccs,
+            &self.edges,
+            &self.import_bindings,
+            reuse,
+            |node, resolved, current| {
+                let seed = self.build_seed(node, resolved, current);
+                self.compute_one(node, seed, base_specs, source_lines_by_file)
+            },
+        )
+    }
 
-        for scc in sccs {
-            let is_self_loop = scc.len() == 1
-                && self
-                    .edges
-                    .get(&scc[0])
-                    .map(|e| e.values().any(|t| t == &scc[0]))
-                    .unwrap_or(false);
+    /// True when `file` reads a summary that changed in this scan.
+    pub fn consumes_changed(
+        &self,
+        file: &str,
+        changed: &std::collections::BTreeSet<NodeKey>,
+    ) -> bool {
+        super::call_graph::consumes_changed_in(&self.import_bindings, file, changed)
+    }
 
-            if scc.len() == 1 && !is_self_loop {
-                let node = &scc[0];
-                let seed = self.build_seed(node, &resolved, &BTreeMap::new());
-                if let Some(summary) =
-                    self.compute_one(node, seed, base_specs, source_lines_by_file)
-                {
-                    resolved.insert(node.clone(), summary.clone());
-                    own.entry(node.0.clone())
-                        .or_default()
-                        .insert(node.1.clone(), summary);
-                }
-                continue;
-            }
-
-            let mut current: BTreeMap<NodeKey, Arc<FunctionSummary>> = BTreeMap::new();
-            for _ in 0..MAX_SCC_FIXPOINT_ITER {
-                let mut next: BTreeMap<NodeKey, Arc<FunctionSummary>> = BTreeMap::new();
-                for node in &scc {
-                    let seed = self.build_seed(node, &resolved, &current);
-                    if let Some(summary) =
-                        self.compute_one(node, seed, base_specs, source_lines_by_file)
-                    {
-                        next.insert(node.clone(), summary);
-                    }
-                }
-                let converged = next == current;
-                current = next;
-                if converged {
-                    break;
-                }
-            }
-            for node in &scc {
-                if let Some(summary) = current.remove(node) {
-                    resolved.insert(node.clone(), summary.clone());
-                    own.entry(node.0.clone())
-                        .or_default()
-                        .insert(node.1.clone(), summary);
-                }
-            }
-        }
-
-        let mut extra: SummariesByFile = BTreeMap::new();
-        for (filepath, bindings) in &self.import_bindings {
-            for (local_name, target) in bindings {
-                if let Some(s) = resolved.get(target) {
-                    extra
-                        .entry(filepath.clone())
-                        .or_default()
-                        .insert(local_name.clone(), s.clone());
-                }
-            }
-        }
-
-        (own, extra)
+    /// What, besides its own text, decides the analysis of `file`.
+    pub fn dependency_fingerprint(&self, file: &str) -> String {
+        super::call_graph::dependency_fingerprint_in(
+            &self.edges,
+            self.nodes.keys(),
+            &self.import_bindings,
+            file,
+        )
     }
 }
 

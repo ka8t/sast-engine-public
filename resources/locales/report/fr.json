@@ -693,10 +693,10 @@
       "benefit": "Protection des secrets dans les logs CI/CD et les environnements fork."
     },
     "workflow_not_in_codeowners": {
-      "name": "Workflows absents du CODEOWNERS",
-      "risk": "Sans protection CODEOWNERS, tout contributeur peut modifier les workflows CI/CD sans revue obligatoire.",
-      "solution": "Ajouter .github/workflows/ @security-team dans le fichier CODEOWNERS.",
-      "benefit": "Revue obligatoire pour les modifications de pipeline, réduction du risque interne."
+      "name": "Workflows de déploiement modifiables sans relecture",
+      "risk": "Vos workflows GitHub Actions (les fichiers de .github/workflows/ qui compilent et déploient votre code) peuvent être modifiés par n'importe quel contributeur sans que personne ne relise la modification. Quelqu'un pourrait changer la façon dont votre code est déployé, ou en lire les secrets, sans être vu.",
+      "solution": "Créez le fichier .github/CODEOWNERS (GitHub y lit qui doit approuver les modifications de quels fichiers) avec la ligne /.github/workflows/ @votre-equipe, puis activez « Require review from Code Owners » dans les règles de protection de branche du dépôt.",
+      "benefit": "Toute modification de la façon dont votre code est compilé et déployé doit être approuvée par une personne que vous avez choisie."
     },
     "gha_secret_in_log": {
       "name": "Secret affiché dans les logs du workflow",
