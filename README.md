@@ -11,17 +11,17 @@ Once the engine is built (see below), run from the `sast-engine-public` folder, 
 macOS:
 
 ```bash
-./target/release/sast-engine scan /path/to/your/project --lang en --with-deps
+./target/release/sast-engine scan /path/to/your/project --lang en
 ```
 
 Windows (PowerShell):
 
 ```powershell
-.\target\release\sast-engine.exe scan C:\path\to\your\project --lang en --with-deps
+.\target\release\sast-engine.exe scan C:\path\to\your\project --lang en
 ```
 
 - `--lang` sets the report language: `en`, `fr`, `es` or `de`.
-- `--with-deps` also checks your dependencies against published vulnerabilities (needs `advisories.sadb`, see [step 6](INSTALLATION.md#step-6-add-the-full-catalog-and-the-vulnerability-database-optional)).
+- If you received `advisories.sadb`, add `--with-deps` to also check your dependencies against published vulnerabilities (see [step 6](INSTALLATION.md#step-6-add-the-full-catalog-and-the-vulnerability-database-optional)).
 - The first run on a project asks what to analyse and writes `audit.config.json`; run the same command again for the analysis.
 - The report is written into your project, under `audit-reports/`: the terminal prints its path on the `Report generated` line. Open it in a browser.
 
