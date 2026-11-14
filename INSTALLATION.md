@@ -92,7 +92,7 @@ Windows:
 
 `--version` prints the build, for example `sast-engine 0.1.0+42.c5be809`: the commit count and short commit hash say exactly which code you built. Every analysis prints it on its first line too. `rules list` prints the number of rule files in the pack on its first line: 38 for the demonstration rules this repository ships.
 
-In the rest of this guide, `sast-engine` stands for `./target/release/sast-engine` on macOS and `.\target\release\sast-engine.exe` on Windows.
+Every command below is run from the `sast-engine-public` folder, with the engine's full path.
 
 ## Step 6: add the full catalog and the vulnerability database (optional)
 
@@ -129,8 +129,18 @@ copy ~\sast-engine-rules\rules.scapack, ~\sast-engine-rules\advisories.sadb targ
 
 The first time you analyse a project, the engine asks you what to analyse and writes the answer into `audit.config.json`, at the root of the project:
 
+macOS:
+
 ```bash
-sast-engine scan /path/to/your/project --lang en
+cd ~/sast-engine-public
+./target/release/sast-engine scan /path/to/your/project --lang en
+```
+
+Windows:
+
+```powershell
+cd ~\sast-engine-public
+.\target\release\sast-engine.exe scan C:\path\to\your\project --lang en
 ```
 
 It asks whether to analyse the whole folder or some sub-folders, and which folders to exclude. It then shows the file with the languages it detected, and writes it once you confirm. Nothing is analysed during this step: run the same command again for the analysis (step 8).
@@ -150,9 +160,21 @@ The questions are asked only in an interactive terminal. In a script, a CI job, 
 
 For a complete analysis, rules and dependencies, in English:
 
+macOS:
+
 ```bash
-sast-engine scan /path/to/your/project --lang en --with-deps
+cd ~/sast-engine-public
+./target/release/sast-engine scan /path/to/your/project --lang en --with-deps
 ```
+
+Windows:
+
+```powershell
+cd ~\sast-engine-public
+.\target\release\sast-engine.exe scan C:\path\to\your\project --lang en --with-deps
+```
+
+For a report in French, Spanish or German, replace `--lang en` with `--lang fr`, `--lang es` or `--lang de`.
 
 - `--lang` sets the language of the report: `en`, `fr`, `es` or `de`.
 - `--with-deps` also compares the versions pinned in your dependency files (`requirements.txt`, `package-lock.json`, `pom.xml`, `composer.lock`…) with published vulnerabilities, using `advisories.sadb` (step 6). Without that file, the analysis says the dependencies were not checked; it never reports them as free of vulnerabilities.
@@ -170,12 +192,12 @@ The terminal first shows what was loaded, then the progress and a summary:
 [sast-engine] 601 file(s) scanned, 101913 line(s) of code, 2960 finding(s)
 ```
 
-Useful options:
+Options are added to the same command, for example `./target/release/sast-engine scan /path/to/your/project --lang en --severity HIGH,CRITICAL`. Useful options:
 
 | Option | Effect |
 |---|---|
 | `--severity HIGH,CRITICAL` | keeps only these severities |
-| `--only-category security` | analyses one category only (see `sast-engine list-rules`) |
+| `--only-category security` | analyses one category only (the list: `./target/release/sast-engine list-rules`) |
 | `--exclude 'tests/'` | skips more files (repeatable) |
 | `--quick` | turns off `--with-deps`, `--with-tests` and the database options, for a faster run |
 | `--format sarif --output result.sarif` | SARIF file for an IDE or a code platform, instead of HTML |
@@ -212,8 +234,16 @@ To silence a finding you have reviewed:
 2. move that file to the root of your project;
 3. pass it to the next analyses:
 
+macOS:
+
 ```bash
-sast-engine scan /path/to/your/project --lang en --with-deps --suppress-file /path/to/your/project/.sca-suppress.json
+./target/release/sast-engine scan /path/to/your/project --lang en --with-deps --suppress-file /path/to/your/project/.sca-suppress.json
+```
+
+Windows:
+
+```powershell
+.\target\release\sast-engine.exe scan C:\path\to\your\project --lang en --with-deps --suppress-file C:\path\to\your\project\.sca-suppress.json
 ```
 
 A suppression applies to that rule, file and line content: if the line changes, the finding comes back, so that a new problem is never hidden.
